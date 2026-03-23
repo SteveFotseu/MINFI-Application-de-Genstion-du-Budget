@@ -2,14 +2,6 @@
 
 // ============================================================
 // FICHIER  : src/app/login/page.tsx
-// RÔLE     : Page de connexion reliée au back-end GBE.
-//
-// FLUX :
-//   1. Utilisateur saisit email + mot de passe
-//   2. POST /api/v1/auth/login { email, password }
-//   3. Back-end répond :
-//      → { "mfaEnabled": true }  = 2FA requis → /two-factor
-//      → { "accessToken": "..." } = connexion directe → /dashboard
 // ============================================================
 
 import React, { useState } from 'react';
@@ -18,11 +10,10 @@ import { useRouter } from 'next/navigation';
 import AuthLayout    from '@/components/auth/AuthLayout';
 import Input         from '@/components/ui/Input';
 import Button        from '@/components/ui/Button';
-import { saveAccessToken } from '@/lib/authService';
-import { FormErrors }      from '@/types/auth';
-import { APP_ROUTES }      from '@/constants/auth';
+import { loginUser, saveAccessToken } from '@/lib/authService';
+import { ApiError, FormErrors }       from '@/types/auth';
+import { APP_ROUTES }                 from '@/constants/auth';
 
-// ── Icônes SVG inline ───────────────────────────────────────
 const IconMail = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
     <rect x="2" y="4" width="20" height="16" rx="2"/>
@@ -56,30 +47,22 @@ const IconShield = () => (
 const IconAlert = () => (
   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="alert__icon">
     <circle cx="12" cy="12" r="10"/>
-    <line x1="12" y1="8" x2="12" y2="12"/>
+    <line x1="12" y1="8"  x2="12"    y2="12"/>
     <line x1="12" y1="16" x2="12.01" y2="16"/>
   </svg>
 );
 
-// ─────────────────────────────────────────────────────────────
-// Validation locale avant appel API
-// ─────────────────────────────────────────────────────────────
 function validate(email: string, password: string): FormErrors {
   const e: FormErrors = {};
-  if (!email.trim()) {
-    e.email = "L'adresse email est requise";
-  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    e.email = 'Adresse email invalide';
-  }
-  if (!password) {
-    e.password = 'Le mot de passe est requis';
-  }
+  if (!email.trim())
+    e.email = "L'adresse email est requise.";
+  else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+    e.email = "L'adresse email est invalide (ex : prenom.nom@minfi.cm).";
+  if (!password)
+    e.password = 'Le mot de passe est requis.';
   return e;
 }
 
-// ─────────────────────────────────────────────────────────────
-// COMPOSANT PAGE
-// ─────────────────────────────────────────────────────────────
 export default function LoginPage() {
   const router = useRouter();
 
@@ -94,73 +77,60 @@ export default function LoginPage() {
     const { name, value } = e.target;
     if (name === 'email')    setEmail(value);
     if (name === 'password') setPassword(value);
-    // Effacer l'erreur du champ modifié
-    if (fieldErrors[name]) setFieldErrors(prev => ({ ...prev, [name]: undefined }));
+    if (fieldErrors[name])   setFieldErrors(prev => ({ ...prev, [name]: undefined }));
     setApiError('');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    // Validation locale
     const errors = validate(email, password);
     if (Object.keys(errors).length > 0) { setFieldErrors(errors); return; }
 
     setIsLoading(true);
     setApiError('');
+    setFieldErrors({});
 
     try {
-      // Appel POST /api/v1/auth/login
-      const res = await fetch('https://gbe-8clf.onrender.com/api/v1/auth/login', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-        body:    JSON.stringify({ email, password }),
-      });
+      const data = await loginUser({ email, password });
 
-      const data = await res.json();
-
-      // Erreur HTTP (401 mauvais identifiants, 404 compte inexistant…)
-      if (!res.ok) {
-        throw new Error(data.message || 'Identifiants incorrects. Veuillez réessayer.');
-      }
-
-      // ✅ Cas 1 : Le back-end retourne { "mfaEnabled": true }
-      // → Stocker l'email → rediriger vers la page de saisie du code 2FA
       if (data.mfaEnabled === true) {
         sessionStorage.setItem('gbe_email_2fa', email);
         router.push(APP_ROUTES.TWO_FACTOR);
         return;
       }
 
-      // ✅ Cas 2 : Connexion directe sans 2FA
-      // → accessToken présent directement
       if (data.accessToken) {
         saveAccessToken(data.accessToken);
         router.push(APP_ROUTES.DASHBOARD);
         return;
       }
 
-      // ⚠️ Cas inattendu : réponse 200 mais structure inconnue
-      // Afficher les champs reçus pour debug
-      setApiError(
-        `Réponse inattendue du serveur. Champs reçus : ${Object.keys(data).join(', ')}`
-      );
+      setApiError(`Réponse inattendue du serveur. Champs reçus : ${Object.keys(data).join(', ')}`);
 
     } catch (err) {
-      setApiError(
-        err instanceof Error ? err.message : 'Une erreur est survenue. Veuillez réessayer.'
-      );
+      if (err instanceof ApiError) {
+        if (Object.keys(err.fieldErrors).length > 0) {
+          setFieldErrors(err.fieldErrors);
+        } else {
+          setApiError(err.message);
+          if (err.code === 'BAD_CREDENTIALS') {
+            setFieldErrors({ email: ' ', password: ' ' });
+          } else if (err.code === 'USER_NOT_FOUND' || err.code === 'USERNAME_NOT_FOUND') {
+            setFieldErrors({ email: 'Aucun compte trouvé avec cette adresse email.' });
+          } else if (err.code === 'ERR_USER_DISABLED') {
+            setFieldErrors({ email: 'Ce compte est désactivé.' });
+          }
+        }
+      } else {
+        setApiError('Une erreur inattendue est survenue. Veuillez réessayer.');
+      }
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <AuthLayout
-      title="Connexion"
-      subtitle="Accédez à votre espace de gestion budgétaire"
-    >
-      {/* Erreur API */}
+    <AuthLayout title="Connexion" subtitle="Accédez à votre espace de gestion budgétaire">
       {apiError && (
         <div className="alert alert--error" role="alert">
           <IconAlert /> {apiError}
@@ -169,41 +139,26 @@ export default function LoginPage() {
 
       <form onSubmit={handleSubmit} noValidate>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-
-          {/* Email */}
           <Input
             id="email" name="email" type="email"
-            label="Adresse email"
-            placeholder="vous@exemple.cm"
-            value={email}
-            onChange={handleChange}
-            error={fieldErrors.email}
-            icon={<IconMail />}
-            autoComplete="email"
-            autoFocus
-            disabled={isLoading}
+            label="Adresse email" placeholder="prenom.nom@minfi.cm"
+            value={email} onChange={handleChange}
+            error={fieldErrors.email} icon={<IconMail />}
+            autoComplete="email" autoFocus disabled={isLoading}
           />
 
-          {/* Mot de passe */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             <Input
               id="password" name="password"
               type={showPwd ? 'text' : 'password'}
-              label="Mot de passe"
-              placeholder="••••••••"
-              value={password}
-              onChange={handleChange}
-              error={fieldErrors.password}
-              icon={<IconLock />}
-              autoComplete="current-password"
-              disabled={isLoading}
+              label="Mot de passe" placeholder="••••••••"
+              value={password} onChange={handleChange}
+              error={fieldErrors.password} icon={<IconLock />}
+              autoComplete="current-password" disabled={isLoading}
               rightElement={
-                <button
-                  type="button"
-                  className="pwd-toggle"
+                <button type="button" className="pwd-toggle"
                   onClick={() => setShowPwd(v => !v)}
-                  aria-label={showPwd ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
-                >
+                  aria-label={showPwd ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}>
                   {showPwd ? <IconEyeOff /> : <IconEye />}
                 </button>
               }
@@ -213,17 +168,12 @@ export default function LoginPage() {
             </Link>
           </div>
 
-          {/* Bouton connexion */}
-          <Button type="submit" isLoading={isLoading} fullWidth>
-            Se connecter
-          </Button>
+          <Button type="submit" isLoading={isLoading} fullWidth>Se connecter</Button>
 
-          {/* Badge sécurité */}
           <div className="secure-badge">
             <IconShield />
             Connexion sécurisée – MINFI Cameroun
           </div>
-
         </div>
       </form>
 

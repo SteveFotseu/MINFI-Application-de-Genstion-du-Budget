@@ -839,3 +839,27 @@ button { font-family: var(--font-body); }
   .otp-input { width: 38px; height: 46px; font-size: 1.1rem; }
   .otp-container { gap: var(--sp-2); }
 }
+
+/* ============================================================
+   AJOUTS À COLLER À LA FIN DE src/app/globals.css
+   ============================================================ */
+
+/* ── Grille 3 colonnes (dates CNI) ── */
+.form-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+/* ── Champ date : empêcher le débordement de l'icône ── */
+.inp-field[type="date"] {
+  /* Laisse de la place pour le picker natif du navigateur à droite */
+  padding-right: 10px;
+}
+
+/* ── Sur tablette : 3 colonnes → 1 colonne ── */
+@media (max-width: 640px) {
+  .form-grid-3 {
+    grid-template-columns: 1fr;
+  }
+}

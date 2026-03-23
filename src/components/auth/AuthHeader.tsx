@@ -120,7 +120,7 @@ const AuthHeader: React.FC = () => {
           <h1 className="auth-header__ministry">Ministère des Finances</h1>
 
           {/* Nom de l'application */}
-          <p className="auth-header__app">Direction du Budget de l&apos;État</p>
+          <p className="auth-header__app">Direction Générale du Budget de l&apos;État</p>
 
         </div>
 
