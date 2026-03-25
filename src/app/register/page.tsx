@@ -228,7 +228,7 @@ function validate(v: RegisterPayload, programmeIds: string[]): FormErrors {
 // État initial
 const EMPTY: RegisterPayload = {
   firstName: '', lastName: '', email: '', phoneNumber: '', dateOfBirth: '',
-  matricule: '', roleId: '', sectionId: '', programmeIds: [],
+  matricule: '', NIU: '', roleId: '', sectionId: '', programmeIds: [],
   cniNumber: '', cniDeliveryDate: '', cniValidityDate: '', cniExpiryDate: '',
   password: '', confirmPassword: '',
   mfaEnabled: true,
@@ -396,6 +396,16 @@ export default function RegisterPage() {
               value={values.matricule} onChange={handleChange}
               error={fieldErrors.matricule} icon={<IconBadge />}
               disabled={isLoading} />
+
+
+             {/* NUI */}
+            <Input id="NIU" name="NIU" type="text"
+              label="NIU  *" placeholder="ex : P123456789"
+              value={values.NIU} onChange={handleChange}
+              error={fieldErrors.NIU} icon={<IconBadge />}
+              disabled={isLoading} />
+
+
 
             {/* Rôle */}
             <div id="roleId">

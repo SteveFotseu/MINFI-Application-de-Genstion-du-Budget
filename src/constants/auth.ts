@@ -50,8 +50,62 @@ export const APP_ROUTES = {
   REGISTER_QR:     '/register/qrcode',   // Page QR code post-inscription
   TWO_FACTOR:      '/two-factor',         // Page saisie code OTP
   FORGOT_PASSWORD: '/forgot-password',
-  DASHBOARD:       '/dashboard',          // Page d'accueil après connexion
+  DASHBOARD:       '/dashboard',          // Page d'accueil après connexion (fallback)
+
+  // ── Dashboards par rôle ──────────────────────────────────
+  // Chaque rôle a sa propre page d'accueil après connexion réussie.
+  // Ces routes correspondent aux valeurs exactes de roleSysteme
+  // retournées par le back-end dans userContext.affectations[0].roleSysteme
+
+  /** Administrateur système → tableau de bord d'administration */
+  ADMIN_DASHBOARD:                    '/admin/dashboard',
+
+  /** Ordonnateur principal → tableau de bord ordonnateur principal */
+  ORDONNATEUR_PRINCIPAL_DASHBOARD:    '/ordonnateur-principal/dashboard',
+
+  /** Ordonnateur secondaire → tableau de bord ordonnateur secondaire */
+  ORDONNATEUR_SECONDAIRE_DASHBOARD:   '/ordonnateur-secondaire/dashboard',
+
+  /** Ordonnateur délégué → tableau de bord ordonnateur délégué */
+  ORDONNATEUR_DELEGUE_DASHBOARD:      '/ordonnateur-delegue/dashboard',
+
+  /** Contrôleur financier → tableau de bord contrôleur financier */
+  CONTROLEUR_FINANCIER_DASHBOARD:     '/controleur-financier/dashboard',
+
+  /** Comptable → tableau de bord comptable */
+  COMPTABLE_DASHBOARD:                '/comptable/dashboard',
+
 } as const;
+
+/**
+ * Mapping rôle → route du dashboard correspondant.
+ *
+ * Clés   = valeurs exactes de roleSysteme retournées par le back-end
+ * Valeurs = routes Next.js vers lesquelles rediriger l'utilisateur
+ *
+ * Utilisation dans two-factor/page.tsx :
+ *   const route = ROLE_DASHBOARD_ROUTES[roleSysteme] ?? APP_ROUTES.DASHBOARD;
+ *   router.push(route);
+ */
+export const ROLE_DASHBOARD_ROUTES: Record<string, string> = {
+  // L'admin est redirigé vers /admin/dashboard (page déjà existante)
+  'ADMIN':                     APP_ROUTES.ADMIN_DASHBOARD,
+
+  // L'ordonnateur principal est redirigé vers son dashboard dédié
+  'ORDONNATEUR_PRINCIPAL':     APP_ROUTES.ORDONNATEUR_PRINCIPAL_DASHBOARD,
+
+  // L'ordonnateur secondaire est redirigé vers son dashboard dédié
+  'ORDONNATEUR_SECONDAIRE':    APP_ROUTES.ORDONNATEUR_SECONDAIRE_DASHBOARD,
+
+  // L'ordonnateur délégué est redirigé vers son dashboard dédié
+  'ORDONNATEUR_DELEGUE':       APP_ROUTES.ORDONNATEUR_DELEGUE_DASHBOARD,
+
+  // Le contrôleur financier est redirigé vers son dashboard dédié
+  'CONTROLEUR_FINANCIER':      APP_ROUTES.CONTROLEUR_FINANCIER_DASHBOARD,
+
+  // Le comptable est redirigé vers son dashboard dédié
+  'COMPTABLE':                 APP_ROUTES.COMPTABLE_DASHBOARD,
+};
 
 /**
  * Durée de validité du code 2FA en secondes (5 minutes).

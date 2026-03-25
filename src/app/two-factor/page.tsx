@@ -12,8 +12,18 @@
 //   3. L'utilisateur saisit le code à 6 chiffres généré par
 //      son application TOTP (Google Authenticator, Authy…)
 //   4. Appel POST /api/v1/auth/verify avec { email, code }
-//   5. Si code correct → accessToken reçu → stocké → /dashboard
+//   5. Si code correct → accessToken reçu → stocké → redirection
+//      vers le dashboard correspondant au roleSysteme de l'utilisateur
 //   6. Si code incorrect → message d'erreur affiché
+//
+// ── MODIFICATION APPORTÉE ──────────────────────────────────
+//   Après vérification 2FA réussie, on lit le roleSysteme dans
+//   la réponse via : response.userContext.affectations[0].roleSysteme
+//   Puis on redirige vers le dashboard correspondant grâce à
+//   ROLE_DASHBOARD_ROUTES[roleSysteme].
+//   On sauvegarde aussi le userContext complet (saveUserContext)
+//   pour que les dashboards puissent afficher le nom, rôle, etc.
+// ──────────────────────────────────────────────────────────
 //
 // SÉCURITÉ :
 //   - Si aucun email en sessionStorage → redirection vers /login
@@ -25,8 +35,16 @@ import Link          from 'next/link';
 import { useRouter } from 'next/navigation';
 import AuthLayout    from '@/components/auth/AuthLayout';
 import Button        from '@/components/ui/Button';
-import { verifyTwoFactor, saveAccessToken } from '@/lib/authService';
-import { APP_ROUTES, TWO_FACTOR_CODE_LENGTH } from '@/constants/auth';
+import {
+  verifyTwoFactor,
+  saveAccessToken,
+  saveUserContext,   // ← NOUVEAU : sauvegarde le contexte utilisateur complet
+} from '@/lib/authService';
+import {
+  APP_ROUTES,
+  TWO_FACTOR_CODE_LENGTH,
+  ROLE_DASHBOARD_ROUTES,  // ← NOUVEAU : mapping rôle → route dashboard
+} from '@/constants/auth';
 
 // ── Icônes ─────────────────────────────────────────────────
 const IconAlert = () => (
@@ -53,13 +71,14 @@ export default function TwoFactorPage() {
   const router = useRouter();
 
   // Tableau de 6 chaînes, une par case OTP
-  const [otp, setOtp]         = useState<string[]>(Array(TWO_FACTOR_CODE_LENGTH).fill(''));
-  const [hasError, setHasError] = useState(false);
-  const [errorMsg, setErrorMsg] = useState('');
+  const [otp, setOtp]               = useState<string[]>(Array(TWO_FACTOR_CODE_LENGTH).fill(''));
+  const [hasError, setHasError]     = useState(false);
+  const [errorMsg, setErrorMsg]     = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [isLoading, setIsLoading]   = useState(false);
+
   // Email récupéré depuis sessionStorage (stocké par la page login)
-  const [userEmail, setUserEmail]   = useState('');
+  const [userEmail, setUserEmail] = useState('');
 
   // Références sur les inputs pour le focus automatique
   const refs = useRef<Array<HTMLInputElement | null>>(
@@ -78,13 +97,18 @@ export default function TwoFactorPage() {
     setUserEmail(email);
   }, [router]);
 
+  // Indique si toutes les cases OTP sont remplies
   const codeIsFull = otp.every(c => c !== '');
-  const otpValue   = otp.join('');
+
+  // Code OTP complet sous forme de chaîne (ex: "123456")
+  const otpValue = otp.join('');
 
   // ── Gestion de la saisie case par case ──
   const handleInput = useCallback((index: number, raw: string) => {
-    if (!/^\d*$/.test(raw)) return; // Accepter uniquement les chiffres
+    // Accepter uniquement les chiffres
+    if (!/^\d*$/.test(raw)) return;
 
+    // Réinitialiser l'état d'erreur à chaque saisie
     setHasError(false);
     setErrorMsg('');
 
@@ -92,12 +116,13 @@ export default function TwoFactorPage() {
 
     // Cas collage : l'utilisateur colle un code entier (ex: "123456")
     if (raw.length > 1) {
+      // Extraire uniquement les chiffres et limiter à TWO_FACTOR_CODE_LENGTH
       const digits = raw.replace(/\D/g, '').slice(0, TWO_FACTOR_CODE_LENGTH);
       for (let i = 0; i < TWO_FACTOR_CODE_LENGTH; i++) {
         next[i] = digits[i] ?? '';
       }
       setOtp(next);
-      // Focus sur la dernière case remplie
+      // Placer le focus sur la dernière case remplie
       refs.current[Math.min(digits.length, TWO_FACTOR_CODE_LENGTH - 1)]?.focus();
       return;
     }
@@ -105,32 +130,37 @@ export default function TwoFactorPage() {
     // Saisie normale : un chiffre à la fois
     next[index] = raw;
     setOtp(next);
-    // Auto-focus sur la case suivante après saisie
+
+    // Auto-focus sur la case suivante après saisie d'un chiffre
     if (raw && index < TWO_FACTOR_CODE_LENGTH - 1) {
       refs.current[index + 1]?.focus();
     }
   }, [otp]);
 
-  // ── Gestion des touches spéciales ──
+  // ── Gestion des touches spéciales (Backspace, flèches) ──
   const handleKeyDown = useCallback((index: number, e: React.KeyboardEvent) => {
     if (e.key === 'Backspace') {
       if (otp[index]) {
-        // Effacer la case courante
+        // Effacer uniquement la case courante
         const next = [...otp]; next[index] = ''; setOtp(next);
       } else if (index > 0) {
-        // Reculer à la case précédente
+        // Si la case est déjà vide, reculer à la case précédente
         refs.current[index - 1]?.focus();
       }
-    } else if (e.key === 'ArrowLeft'  && index > 0) {
+    } else if (e.key === 'ArrowLeft' && index > 0) {
+      // Navigation clavier vers la gauche
       refs.current[index - 1]?.focus();
     } else if (e.key === 'ArrowRight' && index < TWO_FACTOR_CODE_LENGTH - 1) {
+      // Navigation clavier vers la droite
       refs.current[index + 1]?.focus();
     }
   }, [otp]);
 
-  // ── Soumission du code ──
+  // ── Soumission du code TOTP ──
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Ne soumettre que si les 6 cases sont remplies
     if (!codeIsFull) return;
 
     setIsLoading(true);
@@ -138,41 +168,78 @@ export default function TwoFactorPage() {
     setErrorMsg('');
 
     try {
-      // Appel POST /api/v1/auth/verify avec email + code OTP
+      // ── Appel POST /api/v1/auth/verify avec { email, code } ──
       const response = await verifyTwoFactor({
         email: userEmail,
         code:  otpValue,
       });
 
+      // ── Vérification que l'accessToken est présent dans la réponse ──
       if (response.accessToken) {
-        // ✅ Code correct — sauvegarder le JWT
+
+        // 1. Sauvegarder le JWT d'accès dans localStorage
+        //    (utilisé par les pages protégées pour vérifier l'authentification)
         saveAccessToken(response.accessToken);
 
-        // Afficher un message de succès avant de rediriger
+        // 2. Sauvegarder le userContext complet dans localStorage ← NOUVEAU
+        //    (contient firstName, lastName, email, affectations avec roleSysteme)
+        //    Utilisé par les dashboards pour afficher les infos de l'utilisateur
+        if (response.userContext) {
+          saveUserContext(response.userContext);
+        }
+
+        // 3. Déterminer le rôle de l'utilisateur ← NOUVEAU
+        //    On lit le roleSysteme dans la première affectation active.
+        //    affectations[0] est suffisant car un utilisateur a généralement
+        //    une seule affectation principale active.
+        const affectations = response.userContext?.affectations ?? [];
+
+        // Chercher la première affectation active (actif === true)
+        // Si aucune n'est active, prendre la première disponible
+        const affectationActive =
+          affectations.find(a => a.actif) ?? affectations[0];
+
+        // Extraire le roleSysteme (ex: "ADMIN", "ORDONNATEUR_PRINCIPAL"…)
+        const roleSysteme = affectationActive?.roleSysteme;
+
+        // 4. Résoudre la route du dashboard correspondant au rôle ← NOUVEAU
+        //    ROLE_DASHBOARD_ROUTES est un dictionnaire défini dans constants/auth.ts
+        //    Si le rôle est inconnu ou absent, on redirige vers /dashboard (fallback)
+        const dashboardRoute =
+          roleSysteme
+            ? (ROLE_DASHBOARD_ROUTES[roleSysteme] ?? APP_ROUTES.DASHBOARD)
+            : APP_ROUTES.DASHBOARD;
+
+        // 5. Afficher un message de succès avant la redirection
         setSuccessMsg('Code vérifié avec succès ! Connexion en cours…');
 
-        // Nettoyage sessionStorage
+        // 6. Nettoyer l'email temporaire du sessionStorage
         sessionStorage.removeItem('gbe_email_2fa');
 
-        // Rediriger vers le tableau de bord après un court délai
-        setTimeout(() => router.push(APP_ROUTES.DASHBOARD), 1200);
+        // 7. Rediriger vers le dashboard du rôle après un court délai
+        //    Le délai permet à l'utilisateur de voir le message de succès
+        setTimeout(() => router.push(dashboardRoute), 1200);
 
       } else {
-        // Réponse inattendue du back-end
+        // Réponse inattendue du back-end : pas d'accessToken
         setHasError(true);
         setErrorMsg(response.message || 'Code incorrect. Veuillez réessayer.');
       }
 
     } catch (err) {
+      // Erreur réseau ou code invalide retourné par le back-end
       setHasError(true);
       setErrorMsg(
         err instanceof Error ? err.message : 'Code invalide ou expiré.'
       );
-      // Secouer les cases visuellement (via classe CSS)
-      // Réinitialiser les cases pour faciliter la nouvelle saisie
+
+      // Réinitialiser toutes les cases pour faciliter la nouvelle saisie
       setOtp(Array(TWO_FACTOR_CODE_LENGTH).fill(''));
+
+      // Remettre le focus sur la première case
       refs.current[0]?.focus();
     } finally {
+      // Toujours désactiver le chargement, qu'il y ait erreur ou succès
       setIsLoading(false);
     }
   };
@@ -182,21 +249,21 @@ export default function TwoFactorPage() {
       title="Vérification en deux étapes"
       subtitle="Saisissez le code à 6 chiffres de votre application d'authentification"
     >
-      {/* Alerte d'erreur */}
+      {/* ── Alerte d'erreur (code incorrect, réseau…) ── */}
       {errorMsg && (
         <div className="alert alert--error" role="alert">
           <IconAlert /> {errorMsg}
         </div>
       )}
 
-      {/* Alerte de succès */}
+      {/* ── Alerte de succès (code vérifié, redirection en cours) ── */}
       {successMsg && (
         <div className="alert alert--success" role="status">
           <IconCheck /> {successMsg}
         </div>
       )}
 
-      {/* Affichage de l'email pour confirmation */}
+      {/* ── Affichage de l'email pour confirmation ── */}
       {userEmail && (
         <div className="alert alert--info" style={{ fontSize: '.8rem' }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="alert__icon">
@@ -217,9 +284,10 @@ export default function TwoFactorPage() {
               fontSize: '.8125rem', fontWeight: 600,
               color: 'var(--clr-gray-600)', marginBottom: '12px',
             }}>
-              Code à {TWO_FACTOR_CODE_LENGTH} chiffres (Google Authenticator)
+              Code à {TWO_FACTOR_CODE_LENGTH} chiffres (Microsoft Authenticator)
             </p>
 
+            {/* Conteneur des cases OTP avec rôle ARIA pour l'accessibilité */}
             <div
               className="otp-container"
               role="group"
@@ -228,40 +296,45 @@ export default function TwoFactorPage() {
               {otp.map((digit, i) => (
                 <input
                   key={i}
+                  // Stocker la référence pour le focus automatique
                   ref={el => { refs.current[i] = el; }}
                   type="text"
-                  inputMode="numeric"
-                  pattern="\d*"
-                  maxLength={TWO_FACTOR_CODE_LENGTH}
+                  inputMode="numeric"   // Clavier numérique sur mobile
+                  pattern="\d*"         // HTML validation : chiffres uniquement
+                  maxLength={TWO_FACTOR_CODE_LENGTH} // Permet le collage du code entier
                   value={digit}
                   onChange={e => handleInput(i, e.target.value)}
                   onKeyDown={e => handleKeyDown(i, e)}
-                  onFocus={e => e.target.select()}
-                  autoFocus={i === 0}
+                  onFocus={e => e.target.select()} // Sélectionner le contenu au focus
+                  autoFocus={i === 0}   // Focus automatique sur la première case
+                  // Autocomplétion OTP sur mobile (SMS OTP, etc.)
                   autoComplete={i === 0 ? 'one-time-code' : 'off'}
+                  // Désactiver les cases pendant le chargement ou après succès
                   disabled={isLoading || !!successMsg}
                   aria-label={`Chiffre ${i + 1} du code`}
                   className={[
                     'otp-input',
-                    digit      ? 'otp-input--filled' : '',
-                    hasError   ? 'otp-input--error'  : '',
+                    digit    ? 'otp-input--filled' : '',  // Case remplie : fond vert
+                    hasError ? 'otp-input--error'  : '',  // Erreur : fond rouge + animation shake
                   ].join(' ')}
                 />
               ))}
             </div>
           </div>
 
-          {/* Bouton vérifier */}
+          {/* ── Bouton vérifier ── */}
           <Button
             type="submit"
             isLoading={isLoading}
             fullWidth
+            // Désactiver si les 6 cases ne sont pas toutes remplies,
+            // si un chargement est en cours, ou si le code a déjà été validé
             disabled={!codeIsFull || isLoading || !!successMsg}
           >
             Vérifier le code
           </Button>
 
-          {/* Lien retour */}
+          {/* ── Lien retour vers la page de connexion ── */}
           <div style={{
             textAlign: 'center',
             borderTop: '1px solid var(--clr-gray-100)',

@@ -22,6 +22,7 @@ export interface RegisterPayload {
 
   // ── 2. Informations professionnelles ──
   matricule:          string;  // Matricule de la fonction publique
+  NIU:               string;  // Numéro d'Identification Unique (Impôt)
   roleId:             string;  // ID du rôle sélectionné     (@future)
   sectionId:          string;  // ID de la section admin      (@future)
   programmeIds:       string[]; // IDs des programmes choisis (@future)
@@ -74,6 +75,106 @@ export interface Programme {
 }
 
 // ─────────────────────────────────────────────────────────────
+// TYPES RÔLES SYSTÈME
+// Valeurs exactes retournées par le back-end dans
+// userContext.affectations[0].roleSysteme
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Tous les rôles possibles retournés par le back-end.
+ * Utilisé pour typer roleSysteme dans Affectation.
+ */
+export type RoleSysteme =
+  | 'ADMIN'
+  | 'ORDONNATEUR_PRINCIPAL'
+  | 'ORDONNATEUR_SECONDAIRE'
+  | 'ORDONNATEUR_DELEGUE'
+  | 'CONTROLEUR_FINANCIER'
+  | 'COMPTABLE';
+
+// ─────────────────────────────────────────────────────────────
+// TYPES CONTEXTE UTILISATEUR
+// Structure retournée par le back-end après vérification 2FA
+// dans le champ userContext de la réponse /api/v1/auth/verify
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Une affectation de l'utilisateur :
+ * relie un utilisateur à un rôle, une section et un programme budgétaire.
+ * Un utilisateur peut avoir plusieurs affectations.
+ */
+export interface Affectation {
+  /** Identifiant unique de l'affectation */
+  affectationId:    string;
+
+  /** Rôle système de l'utilisateur pour cette affectation */
+  roleSysteme:      RoleSysteme;
+
+  /** Identifiant de la section administrative */
+  sectionId:        string;
+
+  /** Libellé de la section (ex: "Ministère des Finances") */
+  sectionLibelle:   string;
+
+  /** Code de la section (ex: "20") */
+  sectionCode:      string;
+
+  /** Identifiant du programme budgétaire */
+  programmeId:      string;
+
+  /** Libellé du programme (ex: "Pilotage et coordination") */
+  programmeLibelle: string;
+
+  /** Code du programme (ex: "001") */
+  programmeCode:    string;
+
+  /**
+   * Liste des permissions accordées à l'utilisateur
+   * pour cette affectation (ex: ["MANAGE_USERS", "MANAGE_AFFECTATIONS"])
+   */
+  permissions:      string[];
+
+  /** Indique si l'affectation est active */
+  actif:            boolean;
+}
+
+/**
+ * Contexte complet de l'utilisateur connecté.
+ * Retourné par le back-end après vérification réussie du code 2FA.
+ * Contient toutes les informations nécessaires à l'affichage et
+ * à la navigation vers le bon dashboard.
+ */
+export interface UserContext {
+  /** Identifiant unique de l'utilisateur (UUID) */
+  userId:      string;
+
+  /** Prénom de l'utilisateur */
+  firstName:   string;
+
+  /** Nom de famille de l'utilisateur */
+  lastName:    string;
+
+  /** Adresse email de l'utilisateur */
+  email:       string;
+
+  /** Matricule de la fonction publique (peut être null pour l'admin) */
+  matricule:   string | null;
+
+  /** Numéro d'identification unique fiscal (peut être null pour l'admin) */
+  nui:         string | null;
+
+  /** Numéro de CNI (peut être null pour l'admin) */
+  cni:         string | null;
+
+  /**
+   * Liste des affectations de l'utilisateur.
+   * On lit affectations[0].roleSysteme pour déterminer
+   * vers quel dashboard rediriger l'utilisateur.
+   */
+  affectations: Affectation[];
+}
+
+// ─────────────────────────────────────────────────────────────
 // RÉPONSES — ce que le back-end RETOURNE
 // ─────────────────────────────────────────────────────────────
 
@@ -94,11 +195,41 @@ export interface LoginResponse {
   email?:        string;
 }
 
+/**
+ * Réponse complète retournée par POST /api/v1/auth/verify
+ * après vérification réussie du code TOTP à 6 chiffres.
+ *
+ * C'est dans cette réponse que se trouve le roleSysteme
+ * via userContext.affectations[0].roleSysteme
+ */
 export interface VerifyResponse {
-  success?:      boolean;
-  message?:      string;
-  accessToken?:  string;
-  refreshToken?: string;
+  /** JWT d'accès à stocker dans localStorage */
+  accessToken?:   string;
+
+  /** JWT de rafraîchissement */
+  refreshToken?:  string;
+
+  /** Type du token (toujours "Bearer") */
+  tokenType?:     string;
+
+  /** Indique si le 2FA est activé pour cet utilisateur */
+  mfaEnabled?:    boolean;
+
+  /** Indique si c'est la première connexion de l'utilisateur */
+  firstLogin?:    boolean;
+
+  /**
+   * Contexte complet de l'utilisateur connecté.
+   * Contient les affectations avec roleSysteme pour la redirection.
+   * ⚠️  Peut être absent si la réponse est une erreur.
+   */
+  userContext?:   UserContext;
+
+  /** Message retourné par le back-end (succès ou erreur) */
+  message?:       string;
+
+  /** Indicateur de succès (false si erreur) */
+  success?:       boolean;
 }
 
 export interface GenericResponse {
