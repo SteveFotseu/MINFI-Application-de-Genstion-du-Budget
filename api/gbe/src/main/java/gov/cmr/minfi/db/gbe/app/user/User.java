@@ -1,6 +1,7 @@
 package gov.cmr.minfi.db.gbe.app.user;
 
-import gov.cmr.minfi.db.gbe.app.role.Role;
+import gov.cmr.minfi.db.gbe.app.iam.permission.Permission;
+import gov.cmr.minfi.db.gbe.app.iam.role.Role;
 import jakarta.persistence.*;
 import lombok.*;
 import org.springframework.data.annotation.CreatedDate;
@@ -13,8 +14,7 @@ import org.springframework.util.CollectionUtils;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.Collection;
-import java.util.List;
+import java.util.*;
 
 @Entity
 @Getter
@@ -25,7 +25,6 @@ import java.util.List;
 @Table(name = "USERS")
 @EntityListeners(AuditingEntityListener.class)
 public class User implements UserDetails {
-
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -49,14 +48,27 @@ public class User implements UserDetails {
     @Column(name = "DATE_OF_BIRTH")
     private LocalDate dateOfBirth;
 
+    @Column(name = "MATRICULE")
+    private String matricule;
+
+    @Column(name = "NUMERO_CNI")
+    private String numeroCni;
+
+    @Column(name = "CNI_ISSUE_DATE")
+    private LocalDate cniIssueDate;       // date de délivrance
+
+    @Column(name = "CNI_EXPIRY_DATE")
+    private LocalDate cniExpiryDate;      // date d'expiration
+
+    @Column(name = "NUI")
+    private String nui;
+
+    // Statut du compte
     @Column(name = "IS_ENABLED")
     private boolean enabled;
 
     @Column(name = "IS_ACCOUNT_LOCKED")
     private boolean locked;
-
-    @Column(name = "IS_CREDENTIALS_EXPIRED")
-    private boolean expired;
 
     @Column(name = "IS_EMAIL_VERIFIED")
     private boolean emailVerified;
@@ -67,6 +79,18 @@ public class User implements UserDetails {
     @Column(name = "CREDENTIALS_EXPIRED")
     private boolean credentialsExpired;
 
+    @Column(name = "FIRST_LOGIN")
+    @Builder.Default
+    private boolean firstLogin = true;
+
+    // 2FA
+    @Column(name = "MFA_ENABLED")
+    private boolean mfaEnabled;
+
+    @Column(name = "MFA_SECRET")
+    private String secret;
+
+    // Audit
     @CreatedDate
     @Column(name = "CREATED_DATE", updatable = false, nullable = false)
     private LocalDate createdDate;
@@ -75,33 +99,38 @@ public class User implements UserDetails {
     @Column(name = "LAST_MODIFIED_DATE", insertable = false)
     private LocalDateTime lastModifiedAt;
 
-    private boolean mfaEnabled;
-    private String secret;
-
-
     @ManyToMany(
-            cascade = {CascadeType.PERSIST, CascadeType.MERGE},
+            cascade = {CascadeType.MERGE},
             fetch = FetchType.EAGER
     )
     @JoinTable(
             name = "USERS_ROLES",
-            joinColumns = {
-                    @JoinColumn(name = "USERS_ID")
-            },
-            inverseJoinColumns = {
-                    @JoinColumn(name = "ROLES_ID")
-            }
+            joinColumns = {@JoinColumn(name = "USERS_ID")},
+            inverseJoinColumns = {@JoinColumn(name = "ROLES_ID")}
     )
     private List<Role> roles;
+
+    @Transient
+    private Set<Permission> grantedPermissions = new HashSet<>();
 
 
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
-        if (CollectionUtils.isEmpty(this.roles)) {
-            return List.of();
+        final List<SimpleGrantedAuthority> authorities = new ArrayList<>();
+
+        if (!CollectionUtils.isEmpty(this.roles)) {
+            this.roles.forEach(role ->
+                    authorities.add(new SimpleGrantedAuthority(role.getName()))
+            );
         }
-        return this.roles.stream()
-                .map(role -> new SimpleGrantedAuthority(role.getName())).toList();
+
+        if (!CollectionUtils.isEmpty(this.grantedPermissions)) {
+            this.grantedPermissions.forEach(permission ->
+                    authorities.add(new SimpleGrantedAuthority(permission.name()))
+            );
+        }
+
+        return authorities;
     }
 
     @Override
@@ -128,6 +157,4 @@ public class User implements UserDetails {
     public boolean isCredentialsNonExpired() {
         return !this.credentialsExpired;
     }
-
-
 }

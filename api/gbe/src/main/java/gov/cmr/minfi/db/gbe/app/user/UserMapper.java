@@ -1,6 +1,6 @@
 package gov.cmr.minfi.db.gbe.app.user;
 
-import gov.cmr.minfi.db.gbe.app.auth.request.RegistrationRequest;
+import gov.cmr.minfi.db.gbe.app.auth.dto.request.RegistrationRequest;
 import gov.cmr.minfi.db.gbe.app.user.request.ProfileUpdateRequest;
 import io.micrometer.common.util.StringUtils;
 import org.springframework.stereotype.Service;
@@ -15,7 +15,7 @@ public class UserMapper {
 
         if (StringUtils.isNotBlank(request.lastName())
                 && !user.getLastName().equals(request.lastName())) {
-            user.setFirstName(request.lastName());
+            user.setLastName(request.lastName());
         }
 
         if (request.dateOfBirth() != null && !request.dateOfBirth().equals(user.getDateOfBirth())) {

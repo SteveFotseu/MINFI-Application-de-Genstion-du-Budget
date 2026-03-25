@@ -1,59 +1,53 @@
 package gov.cmr.minfi.db.gbe.app.auth;
 
-import gov.cmr.minfi.db.gbe.app.auth.request.AuthenticationRequest;
-import gov.cmr.minfi.db.gbe.app.auth.request.RefreshRequest;
-import gov.cmr.minfi.db.gbe.app.auth.request.RegistrationRequest;
-import gov.cmr.minfi.db.gbe.app.auth.request.VerificationRequest;
-import gov.cmr.minfi.db.gbe.app.auth.response.AuthenticationResponse;
+import gov.cmr.minfi.db.gbe.app.auth.dto.request.AuthenticationRequest;
+import gov.cmr.minfi.db.gbe.app.auth.dto.request.RefreshRequest;
+import gov.cmr.minfi.db.gbe.app.auth.dto.request.SetupMfaRequest;
+import gov.cmr.minfi.db.gbe.app.auth.dto.request.VerificationRequest;
+import gov.cmr.minfi.db.gbe.app.auth.dto.response.AuthenticationResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1/auth")
 @RequiredArgsConstructor
 @Tag(name = "Authentication", description = "Authentication API")
 public class AuthenticationController {
+
     private final AuthenticationService authenticationService;
 
     @PostMapping("/login")
-    public ResponseEntity<AuthenticationResponse> login(
-            @Valid @RequestBody
-            AuthenticationRequest request) {
-        return ResponseEntity.ok(this.authenticationService.login(request));
+    @ResponseStatus(HttpStatus.OK)
+    public AuthenticationResponse login(
+            @Valid @RequestBody AuthenticationRequest request
+    ) {
+        return authenticationService.login(request);
     }
 
-    @PostMapping("/register")
-    public ResponseEntity<?> register(
-            @Valid @RequestBody
-            RegistrationRequest request) {
-
-        var response = this.authenticationService.register(request);
-        if (request.mfaEnabled()) {
-            return ResponseEntity.ok(response);
-        }
-        return ResponseEntity.accepted().build();
-    }
-
-    @PostMapping("/refresh")
-    public ResponseEntity<AuthenticationResponse> refresh(
-            @Valid
-            @RequestBody
-            RefreshRequest request) {
-        return ResponseEntity.ok(this.authenticationService.refreshToken(request));
+    @PostMapping("/setup-mfa")
+    @ResponseStatus(HttpStatus.OK)
+    public AuthenticationResponse setupMfa(
+            @Valid @RequestBody SetupMfaRequest request
+    ) {
+        return authenticationService.setupMfa(request);
     }
 
     @PostMapping("/verify")
-    public ResponseEntity<?> verify(
-            @RequestBody VerificationRequest verificationRequest
+    @ResponseStatus(HttpStatus.OK)
+    public AuthenticationResponse verify(
+            @Valid @RequestBody VerificationRequest request
     ) {
-        return ResponseEntity.ok(this.authenticationService.verifyCode(verificationRequest));
-
+        return authenticationService.verifyCode(request);
     }
 
+    @PostMapping("/refresh")
+    @ResponseStatus(HttpStatus.OK)
+    public AuthenticationResponse refresh(
+            @Valid @RequestBody RefreshRequest request
+    ) {
+        return authenticationService.refreshToken(request);
+    }
 }
