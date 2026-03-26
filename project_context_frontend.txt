@@ -1,5 +1,5 @@
 ﻿Next.js Project Context
-Generated On: 2026-03-25 15:06:14
+Generated On: 2026-03-26 10:40:21
 Root: C:\Users\steve\Documents\Stage_MINFI\Front-end_GBE\MINFI-Application-de-Genstion-du-Budget
 ===============================================
 
@@ -1552,6 +1552,50 @@ export default function ForgotPasswordPage() {
 
 // ============================================================
 // FICHIER  : src/app/login/page.tsx
+// RÔLE     : Page de connexion de l'application GBE-MINFI.
+//
+// FLUX COMPLET DE CONNEXION :
+//
+//   ┌─────────────────────────────────────────────────────┐
+//   │  L'utilisateur saisit email + mot de passe          │
+//   │  → POST /api/v1/auth/login                          │
+//   └──────────────────────┬──────────────────────────────┘
+//                          │
+//          ┌───────────────┴───────────────┐
+//          │                               │
+//    firstLogin: true               firstLogin: false
+//    (1ère connexion)               (connexions suivantes)
+//          │                               │
+//   Le back-end retourne           Le back-end retourne
+//   secretImageUri (QR code)       { mfaEnabled: true,
+//          │                         firstLogin: false }
+//          │                               │
+//   → Stocker le QR code           → Stocker l'email
+//     + email dans                   dans sessionStorage
+//     sessionStorage                        │
+//          │                               │
+//   → Rediriger vers             → Rediriger vers
+//     /register/qrcode             /two-factor
+//     (scanner le QR code)         (saisir le code 6 chiffres)
+//          │                               │
+//          └───────────────┬───────────────┘
+//                          │
+//               POST /api/v1/auth/verify
+//               { email, code (6 chiffres) }
+//                          │
+//               Le back-end retourne :
+//               { accessToken, userContext: {
+//                   affectations: [{ roleSysteme }]
+//                 }
+//               }
+//                          │
+//               → Lire roleSysteme
+//               → Rediriger vers le dashboard du rôle
+//
+// SÉCURITÉ :
+//   - Validation locale avant l'appel API
+//   - Gestion des erreurs back-end typées (ApiError)
+//   - Aucun token n'est stocké ici (stocké dans two-factor/page.tsx)
 // ============================================================
 
 import React, { useState } from 'react';
@@ -1560,28 +1604,44 @@ import { useRouter } from 'next/navigation';
 import AuthLayout    from '@/components/auth/AuthLayout';
 import Input         from '@/components/ui/Input';
 import Button        from '@/components/ui/Button';
+// On importe loginUser pour l'appel API et saveAccessToken pour le cas
+// exceptionnel où le back-end retournerait directement un token sans 2FA
 import { loginUser, saveAccessToken } from '@/lib/authService';
+// ApiError est la classe d'erreur typée retournée par authService
 import { ApiError, FormErrors }       from '@/types/auth';
+// APP_ROUTES contient toutes les routes de l'application (centralisées)
 import { APP_ROUTES }                 from '@/constants/auth';
 
+// ─────────────────────────────────────────────────────────────
+// ICÔNES SVG INLINE
+// On les définit ici pour éviter des imports externes inutiles
+// ─────────────────────────────────────────────────────────────
+
+// Icône enveloppe pour le champ email
 const IconMail = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
     <rect x="2" y="4" width="20" height="16" rx="2"/>
     <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
   </svg>
 );
+
+// Icône cadenas pour le champ mot de passe
 const IconLock = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
     <rect x="3" y="11" width="18" height="11" rx="2"/>
     <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
   </svg>
 );
+
+// Icône œil ouvert : afficher le mot de passe
 const IconEye = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
     <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
     <circle cx="12" cy="12" r="3"/>
   </svg>
 );
+
+// Icône œil barré : masquer le mot de passe
 const IconEyeOff = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
     <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
@@ -1589,11 +1649,8 @@ const IconEyeOff = () => (
     <line x1="1" y1="1" x2="23" y2="23"/>
   </svg>
 );
-const IconShield = () => (
-  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-  </svg>
-);
+
+// Icône alerte pour les messages d'erreur globaux
 const IconAlert = () => (
   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="alert__icon">
     <circle cx="12" cy="12" r="10"/>
@@ -1602,135 +1659,340 @@ const IconAlert = () => (
   </svg>
 );
 
+// Icône bouclier pour le badge de sécurité
+const IconShield = () => (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+  </svg>
+);
+
+// ─────────────────────────────────────────────────────────────
+// VALIDATION LOCALE DU FORMULAIRE
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Valide les champs email et password avant d'envoyer la requête API.
+ * Retourne un objet d'erreurs (vide si tout est valide).
+ *
+ * On valide côté client AVANT l'appel API pour :
+ *   1. Réduire les requêtes inutiles vers le serveur
+ *   2. Donner un retour immédiat à l'utilisateur
+ *   3. Eviter des erreurs 400 évitables
+ */
 function validate(email: string, password: string): FormErrors {
-  const e: FormErrors = {};
-  if (!email.trim())
-    e.email = "L'adresse email est requise.";
-  else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
-    e.email = "L'adresse email est invalide (ex : prenom.nom@minfi.cm).";
-  if (!password)
-    e.password = 'Le mot de passe est requis.';
-  return e;
+  const errors: FormErrors = {};
+
+  // Vérification de l'email
+  if (!email.trim()) {
+    // Le champ est vide
+    errors.email = "L'adresse email est requise.";
+  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    // Le format ne correspond pas à une adresse email valide
+    errors.email = "L'adresse email est invalide (ex : prenom.nom@minfi.cm).";
+  }
+
+  // Vérification du mot de passe
+  if (!password) {
+    // Le champ est vide
+    errors.password = 'Le mot de passe est requis.';
+  }
+
+  return errors;
 }
 
+// ─────────────────────────────────────────────────────────────
+// COMPOSANT PRINCIPAL DE LA PAGE DE CONNEXION
+// ─────────────────────────────────────────────────────────────
 export default function LoginPage() {
+  // Hook de navigation Next.js pour rediriger après connexion
   const router = useRouter();
 
-  const [email,       setEmail]       = useState('');
-  const [password,    setPassword]    = useState('');
-  const [fieldErrors, setFieldErrors] = useState<FormErrors>({});
-  const [apiError,    setApiError]    = useState('');
-  const [isLoading,   setIsLoading]   = useState(false);
-  const [showPwd,     setShowPwd]     = useState(false);
+  // ── État des champs du formulaire ──
+  const [email,    setEmail]    = useState(''); // Valeur du champ email
+  const [password, setPassword] = useState(''); // Valeur du champ mot de passe
 
+  // ── État des erreurs ──
+  const [fieldErrors, setFieldErrors] = useState<FormErrors>({}); // Erreurs par champ
+  const [apiError,    setApiError]    = useState('');              // Erreur globale API
+
+  // ── État de chargement ──
+  const [isLoading, setIsLoading] = useState(false); // true pendant l'appel API
+
+  // ── Affichage du mot de passe ──
+  const [showPwd, setShowPwd] = useState(false); // true = mot de passe visible
+
+  // ─────────────────────────────────────────────────────────────
+  // GESTION DES CHANGEMENTS DE CHAMPS
+  // ─────────────────────────────────────────────────────────────
+
+  /**
+   * Met à jour les champs et efface les erreurs associées
+   * dès que l'utilisateur commence à taper.
+   * Cela évite d'avoir des messages d'erreur persistants
+   * alors que l'utilisateur est en train de corriger.
+   */
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
+
+    // Mettre à jour la valeur du champ correspondant
     if (name === 'email')    setEmail(value);
     if (name === 'password') setPassword(value);
-    if (fieldErrors[name])   setFieldErrors(prev => ({ ...prev, [name]: undefined }));
+
+    // Effacer l'erreur du champ modifié (feedback immédiat)
+    if (fieldErrors[name]) {
+      setFieldErrors(prev => ({ ...prev, [name]: undefined }));
+    }
+
+    // Effacer l'erreur globale API si l'utilisateur modifie quelque chose
     setApiError('');
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const errors = validate(email, password);
-    if (Object.keys(errors).length > 0) { setFieldErrors(errors); return; }
+  // ─────────────────────────────────────────────────────────────
+  // SOUMISSION DU FORMULAIRE
+  // ─────────────────────────────────────────────────────────────
 
-    setIsLoading(true);
-    setApiError('');
-    setFieldErrors({});
+  /**
+   * Gère la soumission du formulaire de connexion.
+   *
+   * ÉTAPE 1 : Validation locale (email + password)
+   * ÉTAPE 2 : Appel POST /api/v1/auth/login
+   * ÉTAPE 3 : Lecture de la réponse et redirection selon le cas :
+   *
+   *   CAS A — firstLogin: true + secretImageUri présent
+   *     → C'est la PREMIÈRE connexion de l'utilisateur
+   *     → Le back-end retourne un QR code (secretImageUri)
+   *     → On stocke le QR code dans sessionStorage
+   *     → On redirige vers /register/qrcode pour qu'il le scanne
+   *
+   *   CAS B — firstLogin: false + mfaEnabled: true
+   *     → C'est une connexion NORMALE (pas la première)
+   *     → Le 2FA est activé, l'utilisateur doit saisir son code
+   *     → On stocke l'email dans sessionStorage
+   *     → On redirige vers /two-factor
+   *
+   *   CAS C — accessToken présent directement (fallback)
+   *     → Connexion directe sans 2FA (normalement pas le cas ici)
+   *     → On stocke le token et on redirige vers /dashboard
+   */
+  const handleSubmit = async (e: React.FormEvent) => {
+    // Empêcher le rechargement de la page (comportement HTML natif)
+    e.preventDefault();
+
+    // ── ÉTAPE 1 : Validation locale ──
+    const errors = validate(email, password);
+    if (Object.keys(errors).length > 0) {
+      // Il y a des erreurs → les afficher sans appeler l'API
+      setFieldErrors(errors);
+      return;
+    }
+
+    // ── ÉTAPE 2 : Préparation de l'appel API ──
+    setIsLoading(true);  // Activer le spinner du bouton
+    setApiError('');     // Effacer les erreurs API précédentes
+    setFieldErrors({});  // Effacer les erreurs de champs
 
     try {
+      // Appel POST /api/v1/auth/login avec email + password
       const data = await loginUser({ email, password });
 
-      if (data.mfaEnabled === true) {
+      // ── ÉTAPE 3 : Traitement de la réponse ──
+
+      // ─────────────────────────────────────────────
+      // CAS A : PREMIÈRE CONNEXION (firstLogin: true)
+      // Le back-end retourne un QR code à scanner.
+      // L'utilisateur doit configurer Microsoft Authenticator
+      // avant de pouvoir se connecter.
+      // ─────────────────────────────────────────────
+      if (data.firstLogin === true && data.secretImageUri) {
+        // Stocker le QR code (image base64) dans sessionStorage.
+        // sessionStorage est effacé à la fermeture de l'onglet,
+        // ce qui est plus sécurisé que localStorage pour des données temporaires.
+        sessionStorage.setItem('gbe_qr_code', data.secretImageUri);
+
+        // Stocker l'email pour la vérification du code TOTP après le scan
         sessionStorage.setItem('gbe_email_2fa', email);
-        router.push(APP_ROUTES.TWO_FACTOR);
-        return;
+
+        // Rediriger vers la page QR code pour que l'utilisateur scanne
+        router.push(APP_ROUTES.REGISTER_QR);
+        return; // Arrêter l'exécution ici
       }
 
+      // ─────────────────────────────────────────────
+      // CAS B : CONNEXION NORMALE (firstLogin: false + mfaEnabled: true)
+      // L'utilisateur a déjà configuré son authenticator.
+      // Il doit maintenant saisir le code à 6 chiffres.
+      // ─────────────────────────────────────────────
+      if (data.mfaEnabled === true && data.firstLogin === false) {
+        // Stocker l'email dans sessionStorage pour la page two-factor.
+        // La page two-factor en a besoin pour envoyer { email, code }
+        // au back-end via POST /api/v1/auth/verify
+        sessionStorage.setItem('gbe_email_2fa', email);
+
+        // Rediriger vers la page de saisie du code OTP
+        router.push(APP_ROUTES.TWO_FACTOR);
+        return; // Arrêter l'exécution ici
+      }
+
+      // ─────────────────────────────────────────────
+      // CAS C : CONNEXION DIRECTE (sans 2FA — cas de fallback)
+      // Normalement ce cas ne devrait pas arriver dans ce projet
+      // car le 2FA est obligatoire, mais on le gère par sécurité.
+      // ─────────────────────────────────────────────
       if (data.accessToken) {
+        // Stocker le JWT d'accès dans localStorage
         saveAccessToken(data.accessToken);
+
+        // Rediriger vers le dashboard générique (fallback)
         router.push(APP_ROUTES.DASHBOARD);
         return;
       }
 
-      setApiError(`Réponse inattendue du serveur. Champs reçus : ${Object.keys(data).join(', ')}`);
+      // ─────────────────────────────────────────────
+      // CAS D : Réponse inattendue du back-end
+      // On affiche un message d'erreur générique
+      // ─────────────────────────────────────────────
+      setApiError(
+        `Réponse inattendue du serveur. Veuillez réessayer ou contacter l'administrateur.`
+      );
 
     } catch (err) {
+      // ── Gestion des erreurs API ──
+
       if (err instanceof ApiError) {
+        // Erreur typée retournée par authService
+        // (erreur métier du back-end, code HTTP 4xx ou 5xx)
+
         if (Object.keys(err.fieldErrors).length > 0) {
+          // Le back-end a retourné des erreurs par champ (validation)
+          // Ex: { email: "Format invalide" }
           setFieldErrors(err.fieldErrors);
         } else {
+          // Erreur globale (mauvais identifiants, compte désactivé…)
           setApiError(err.message);
+
+          // Pour les erreurs liées aux identifiants, on marque
+          // visuellement les deux champs en rouge sans message de champ
+          // (on ne veut pas dire lequel est faux pour des raisons de sécurité)
           if (err.code === 'BAD_CREDENTIALS') {
             setFieldErrors({ email: ' ', password: ' ' });
-          } else if (err.code === 'USER_NOT_FOUND' || err.code === 'USERNAME_NOT_FOUND') {
+          }
+
+          // Compte inexistant → souligner uniquement le champ email
+          else if (err.code === 'USER_NOT_FOUND' || err.code === 'USERNAME_NOT_FOUND') {
             setFieldErrors({ email: 'Aucun compte trouvé avec cette adresse email.' });
-          } else if (err.code === 'ERR_USER_DISABLED') {
-            setFieldErrors({ email: 'Ce compte est désactivé.' });
+          }
+
+          // Compte désactivé → souligner uniquement le champ email
+          else if (err.code === 'ERR_USER_DISABLED') {
+            setFieldErrors({ email: 'Ce compte est désactivé. Contactez votre administrateur.' });
           }
         }
       } else {
+        // Erreur inattendue (erreur JavaScript, réseau, etc.)
         setApiError('Une erreur inattendue est survenue. Veuillez réessayer.');
       }
     } finally {
+      // Toujours désactiver le chargement à la fin,
+      // qu'il y ait eu erreur ou succès
       setIsLoading(false);
     }
   };
 
+  // ─────────────────────────────────────────────────────────────
+  // RENDU DU COMPOSANT
+  // ─────────────────────────────────────────────────────────────
   return (
-    <AuthLayout title="Connexion" subtitle="Accédez à votre espace de gestion budgétaire">
+    <AuthLayout
+      title="Connexion"
+      subtitle="Accédez à votre espace de gestion budgétaire"
+    >
+
+      {/* ── Message d'erreur global (API ou réseau) ── */}
+      {/* Affiché au-dessus du formulaire si une erreur globale existe */}
       {apiError && (
         <div className="alert alert--error" role="alert">
           <IconAlert /> {apiError}
         </div>
       )}
 
+      {/* ── Formulaire de connexion ── */}
+      {/* noValidate désactive la validation HTML native pour utiliser notre validation custom */}
       <form onSubmit={handleSubmit} noValidate>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+
+          {/* ── Champ email ── */}
           <Input
-            id="email" name="email" type="email"
-            label="Adresse email" placeholder="prenom.nom@minfi.cm"
-            value={email} onChange={handleChange}
-            error={fieldErrors.email} icon={<IconMail />}
-            autoComplete="email" autoFocus disabled={isLoading}
+            id="email"
+            name="email"
+            type="email"
+            label="Adresse email"
+            placeholder="prenom.nom@minfi.cm"
+            value={email}
+            onChange={handleChange}
+            error={fieldErrors.email}      // Affiche le message d'erreur si présent
+            icon={<IconMail />}             // Icône à gauche du champ
+            autoComplete="email"            // Aide les gestionnaires de mots de passe
+            autoFocus                        // Focus automatique sur ce champ au chargement
+            disabled={isLoading}            // Désactivé pendant le chargement
           />
 
+          {/* ── Champ mot de passe ── */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             <Input
-              id="password" name="password"
-              type={showPwd ? 'text' : 'password'}
-              label="Mot de passe" placeholder="••••••••"
-              value={password} onChange={handleChange}
-              error={fieldErrors.password} icon={<IconLock />}
-              autoComplete="current-password" disabled={isLoading}
+              id="password"
+              name="password"
+              type={showPwd ? 'text' : 'password'} // Bascule entre texte et mot de passe masqué
+              label="Mot de passe"
+              placeholder="••••••••"
+              value={password}
+              onChange={handleChange}
+              error={fieldErrors.password}   // Affiche le message d'erreur si présent
+              icon={<IconLock />}             // Icône cadenas à gauche
+              autoComplete="current-password" // Aide les gestionnaires de mots de passe
+              disabled={isLoading}            // Désactivé pendant le chargement
               rightElement={
-                <button type="button" className="pwd-toggle"
-                  onClick={() => setShowPwd(v => !v)}
-                  aria-label={showPwd ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}>
+                // Bouton toggle pour afficher/masquer le mot de passe
+                <button
+                  type="button"
+                  className="pwd-toggle"
+                  onClick={() => setShowPwd(v => !v)} // Inverser l'état d'affichage
+                  aria-label={showPwd ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+                >
+                  {/* Icône change selon l'état : œil ouvert ou barré */}
                   {showPwd ? <IconEyeOff /> : <IconEye />}
                 </button>
               }
             />
+
+            {/* Lien "Mot de passe oublié ?" → page de réinitialisation */}
             <Link href={APP_ROUTES.FORGOT_PASSWORD} className="forgot-link">
               Mot de passe oublié ?
             </Link>
           </div>
 
-          <Button type="submit" isLoading={isLoading} fullWidth>Se connecter</Button>
+          {/* ── Bouton de connexion ── */}
+          {/* isLoading affiche un spinner et désactive le bouton */}
+          <Button type="submit" isLoading={isLoading} fullWidth>
+            Se connecter
+          </Button>
 
+          {/* ── Badge de sécurité ── */}
+          {/* Rassure l'utilisateur sur la sécurité de la connexion */}
           <div className="secure-badge">
             <IconShield />
             Connexion sécurisée – MINFI Cameroun
           </div>
+
         </div>
       </form>
 
+      {/* ── Lien vers l'inscription ── */}
+      {/* Affiché sous la carte du formulaire */}
       <p className="auth-switch">
         Pas encore de compte ?{' '}
         <Link href={APP_ROUTES.REGISTER}>Créer un compte</Link>
       </p>
+
     </AuthLayout>
   );
 }
@@ -3971,357 +4233,98 @@ export default function RegisterPage() {
 -----------------------------------------------
 'use client';
 
-// ============================================================
-// FICHIER  : src/app/two-factor/page.tsx
-// RÔLE     : Page de vérification du code TOTP (2FA).
-//
-// FLUX :
-//   1. L'utilisateur arrive ici après une connexion réussie
-//      qui a retourné mfaRequired=true
-//   2. L'email de l'utilisateur a été stocké dans sessionStorage
-//      par la page de login (clé : 'gbe_email_2fa')
-//   3. L'utilisateur saisit le code à 6 chiffres généré par
-//      son application TOTP (Google Authenticator, Authy…)
-//   4. Appel POST /api/v1/auth/verify avec { email, code }
-//   5. Si code correct → accessToken reçu → stocké → redirection
-//      vers le dashboard correspondant au roleSysteme de l'utilisateur
-//   6. Si code incorrect → message d'erreur affiché
-//
-// ── MODIFICATION APPORTÉE ──────────────────────────────────
-//   Après vérification 2FA réussie, on lit le roleSysteme dans
-//   la réponse via : response.userContext.affectations[0].roleSysteme
-//   Puis on redirige vers le dashboard correspondant grâce à
-//   ROLE_DASHBOARD_ROUTES[roleSysteme].
-//   On sauvegarde aussi le userContext complet (saveUserContext)
-//   pour que les dashboards puissent afficher le nom, rôle, etc.
-// ──────────────────────────────────────────────────────────
-//
-// SÉCURITÉ :
-//   - Si aucun email en sessionStorage → redirection vers /login
-//   - Le code OTP expire côté back-end (pas besoin de minuterie)
-// ============================================================
-
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import Link          from 'next/link';
 import { useRouter } from 'next/navigation';
 import AuthLayout    from '@/components/auth/AuthLayout';
 import Button        from '@/components/ui/Button';
-import {
-  verifyTwoFactor,
-  saveAccessToken,
-  saveUserContext,   // ← NOUVEAU : sauvegarde le contexte utilisateur complet
-} from '@/lib/authService';
-import {
-  APP_ROUTES,
-  TWO_FACTOR_CODE_LENGTH,
-  ROLE_DASHBOARD_ROUTES,  // ← NOUVEAU : mapping rôle → route dashboard
-} from '@/constants/auth';
+import { verifyTwoFactor, saveAccessToken, saveUserContext } from '@/lib/authService';
+import { APP_ROUTES, TWO_FACTOR_CODE_LENGTH, ROLE_ROUTES } from '@/constants/auth';
+import { ApiError } from '@/types/auth';
 
-// ── Icônes ─────────────────────────────────────────────────
-const IconAlert = () => (
-  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="alert__icon">
-    <circle cx="12" cy="12" r="10"/>
-    <line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-  </svg>
-);
-const IconCheck = () => (
-  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="alert__icon">
-    <polyline points="20,6 9,17 4,12"/>
-  </svg>
-);
-const IconArrowLeft = () => (
-  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <line x1="19" y1="12" x2="5" y2="12"/><polyline points="12,19 5,12 12,5"/>
-  </svg>
-);
-
-// ─────────────────────────────────────────────────────────────
-// COMPOSANT PAGE
-// ─────────────────────────────────────────────────────────────
 export default function TwoFactorPage() {
   const router = useRouter();
-
-  // Tableau de 6 chaînes, une par case OTP
-  const [otp, setOtp]               = useState<string[]>(Array(TWO_FACTOR_CODE_LENGTH).fill(''));
-  const [hasError, setHasError]     = useState(false);
-  const [errorMsg, setErrorMsg]     = useState('');
+  const [otp, setOtp] = useState<string[]>(Array(TWO_FACTOR_CODE_LENGTH).fill(''));
+  const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
-  const [isLoading, setIsLoading]   = useState(false);
-
-  // Email récupéré depuis sessionStorage (stocké par la page login)
+  const [isLoading, setIsLoading] = useState(false);
   const [userEmail, setUserEmail] = useState('');
+  const refs = useRef<Array<HTMLInputElement | null>>(Array(TWO_FACTOR_CODE_LENGTH).fill(null));
 
-  // Références sur les inputs pour le focus automatique
-  const refs = useRef<Array<HTMLInputElement | null>>(
-    Array(TWO_FACTOR_CODE_LENGTH).fill(null)
-  );
-
-  // ── Récupérer l'email depuis sessionStorage ──
   useEffect(() => {
     const email = sessionStorage.getItem('gbe_email_2fa');
-    if (!email) {
-      // Aucun email trouvé → l'utilisateur n'est pas passé par le login
-      // → rediriger pour éviter une page inutilisable
-      router.replace(APP_ROUTES.LOGIN);
-      return;
-    }
+    if (!email) { router.replace('/login'); return; }
     setUserEmail(email);
   }, [router]);
 
-  // Indique si toutes les cases OTP sont remplies
-  const codeIsFull = otp.every(c => c !== '');
-
-  // Code OTP complet sous forme de chaîne (ex: "123456")
-  const otpValue = otp.join('');
-
-  // ── Gestion de la saisie case par case ──
-  const handleInput = useCallback((index: number, raw: string) => {
-    // Accepter uniquement les chiffres
-    if (!/^\d*$/.test(raw)) return;
-
-    // Réinitialiser l'état d'erreur à chaque saisie
-    setHasError(false);
+  const handleInput = (index: number, value: string) => {
+    if (!/^\d*$/.test(value)) return;
+    const newOtp = [...otp];
+    newOtp[index] = value.slice(-1);
+    setOtp(newOtp);
     setErrorMsg('');
+    if (value && index < TWO_FACTOR_CODE_LENGTH - 1) refs.current[index + 1]?.focus();
+  };
 
-    const next = [...otp];
+  const handleKeyDown = (index: number, e: React.KeyboardEvent) => {
+    if (e.key === 'Backspace' && !otp[index] && index > 0) refs.current[index - 1]?.focus();
+  };
 
-    // Cas collage : l'utilisateur colle un code entier (ex: "123456")
-    if (raw.length > 1) {
-      // Extraire uniquement les chiffres et limiter à TWO_FACTOR_CODE_LENGTH
-      const digits = raw.replace(/\D/g, '').slice(0, TWO_FACTOR_CODE_LENGTH);
-      for (let i = 0; i < TWO_FACTOR_CODE_LENGTH; i++) {
-        next[i] = digits[i] ?? '';
-      }
-      setOtp(next);
-      // Placer le focus sur la dernière case remplie
-      refs.current[Math.min(digits.length, TWO_FACTOR_CODE_LENGTH - 1)]?.focus();
-      return;
-    }
-
-    // Saisie normale : un chiffre à la fois
-    next[index] = raw;
-    setOtp(next);
-
-    // Auto-focus sur la case suivante après saisie d'un chiffre
-    if (raw && index < TWO_FACTOR_CODE_LENGTH - 1) {
-      refs.current[index + 1]?.focus();
-    }
-  }, [otp]);
-
-  // ── Gestion des touches spéciales (Backspace, flèches) ──
-  const handleKeyDown = useCallback((index: number, e: React.KeyboardEvent) => {
-    if (e.key === 'Backspace') {
-      if (otp[index]) {
-        // Effacer uniquement la case courante
-        const next = [...otp]; next[index] = ''; setOtp(next);
-      } else if (index > 0) {
-        // Si la case est déjà vide, reculer à la case précédente
-        refs.current[index - 1]?.focus();
-      }
-    } else if (e.key === 'ArrowLeft' && index > 0) {
-      // Navigation clavier vers la gauche
-      refs.current[index - 1]?.focus();
-    } else if (e.key === 'ArrowRight' && index < TWO_FACTOR_CODE_LENGTH - 1) {
-      // Navigation clavier vers la droite
-      refs.current[index + 1]?.focus();
-    }
-  }, [otp]);
-
-  // ── Soumission du code TOTP ──
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    // Ne soumettre que si les 6 cases sont remplies
-    if (!codeIsFull) return;
+    const fullCode = otp.join('');
+    if (fullCode.length !== TWO_FACTOR_CODE_LENGTH) return;
 
     setIsLoading(true);
-    setHasError(false);
     setErrorMsg('');
 
     try {
-      // ── Appel POST /api/v1/auth/verify avec { email, code } ──
-      const response = await verifyTwoFactor({
-        email: userEmail,
-        code:  otpValue,
-      });
+      const response = await verifyTwoFactor({ email: userEmail, code: fullCode });
 
-      // ── Vérification que l'accessToken est présent dans la réponse ──
       if (response.accessToken) {
-
-        // 1. Sauvegarder le JWT d'accès dans localStorage
-        //    (utilisé par les pages protégées pour vérifier l'authentification)
         saveAccessToken(response.accessToken);
+        saveUserContext(response.userContext);
+        
+        setSuccessMsg('Vérification réussie !');
 
-        // 2. Sauvegarder le userContext complet dans localStorage ← NOUVEAU
-        //    (contient firstName, lastName, email, affectations avec roleSysteme)
-        //    Utilisé par les dashboards pour afficher les infos de l'utilisateur
-        if (response.userContext) {
-          saveUserContext(response.userContext);
-        }
+        // --- LOGIQUE DE REDIRECTION PAR RÔLE ---
+        // On récupère le rôle système (ex: ADMIN, COMPTABLE...)
+        const role = response.userContext.affectations[0]?.roleSysteme;
+        
+        // On cherche la route correspondante, sinon on va au dashboard par défaut
+        const targetPath = ROLE_ROUTES[role] || APP_ROUTES.DASHBOARD;
 
-        // 3. Déterminer le rôle de l'utilisateur ← NOUVEAU
-        //    On lit le roleSysteme dans la première affectation active.
-        //    affectations[0] est suffisant car un utilisateur a généralement
-        //    une seule affectation principale active.
-        const affectations = response.userContext?.affectations ?? [];
-
-        // Chercher la première affectation active (actif === true)
-        // Si aucune n'est active, prendre la première disponible
-        const affectationActive =
-          affectations.find(a => a.actif) ?? affectations[0];
-
-        // Extraire le roleSysteme (ex: "ADMIN", "ORDONNATEUR_PRINCIPAL"…)
-        const roleSysteme = affectationActive?.roleSysteme;
-
-        // 4. Résoudre la route du dashboard correspondant au rôle ← NOUVEAU
-        //    ROLE_DASHBOARD_ROUTES est un dictionnaire défini dans constants/auth.ts
-        //    Si le rôle est inconnu ou absent, on redirige vers /dashboard (fallback)
-        const dashboardRoute =
-          roleSysteme
-            ? (ROLE_DASHBOARD_ROUTES[roleSysteme] ?? APP_ROUTES.DASHBOARD)
-            : APP_ROUTES.DASHBOARD;
-
-        // 5. Afficher un message de succès avant la redirection
-        setSuccessMsg('Code vérifié avec succès ! Connexion en cours…');
-
-        // 6. Nettoyer l'email temporaire du sessionStorage
+        // Nettoyage des données temporaires (QR code et email)
         sessionStorage.removeItem('gbe_email_2fa');
+        sessionStorage.removeItem('gbe_qr_code');
 
-        // 7. Rediriger vers le dashboard du rôle après un court délai
-        //    Le délai permet à l'utilisateur de voir le message de succès
-        setTimeout(() => router.push(dashboardRoute), 1200);
-
-      } else {
-        // Réponse inattendue du back-end : pas d'accessToken
-        setHasError(true);
-        setErrorMsg(response.message || 'Code incorrect. Veuillez réessayer.');
+        setTimeout(() => router.push(targetPath), 1000);
       }
-
     } catch (err) {
-      // Erreur réseau ou code invalide retourné par le back-end
-      setHasError(true);
-      setErrorMsg(
-        err instanceof Error ? err.message : 'Code invalide ou expiré.'
-      );
-
-      // Réinitialiser toutes les cases pour faciliter la nouvelle saisie
+      if (err instanceof ApiError) setErrorMsg(err.message);
+      else setErrorMsg('Code incorrect ou expiré.');
       setOtp(Array(TWO_FACTOR_CODE_LENGTH).fill(''));
-
-      // Remettre le focus sur la première case
       refs.current[0]?.focus();
     } finally {
-      // Toujours désactiver le chargement, qu'il y ait erreur ou succès
       setIsLoading(false);
     }
   };
 
   return (
-    <AuthLayout
-      title="Vérification en deux étapes"
-      subtitle="Saisissez le code à 6 chiffres de votre application d'authentification"
-    >
-      {/* ── Alerte d'erreur (code incorrect, réseau…) ── */}
-      {errorMsg && (
-        <div className="alert alert--error" role="alert">
-          <IconAlert /> {errorMsg}
-        </div>
-      )}
-
-      {/* ── Alerte de succès (code vérifié, redirection en cours) ── */}
-      {successMsg && (
-        <div className="alert alert--success" role="status">
-          <IconCheck /> {successMsg}
-        </div>
-      )}
-
-      {/* ── Affichage de l'email pour confirmation ── */}
-      {userEmail && (
-        <div className="alert alert--info" style={{ fontSize: '.8rem' }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="alert__icon">
-            <circle cx="12" cy="12" r="10"/>
-            <line x1="12" y1="16" x2="12" y2="12"/>
-            <line x1="12" y1="8" x2="12.01" y2="8"/>
-          </svg>
-          Vérification pour : <strong>{userEmail}</strong>
-        </div>
-      )}
-
-      <form onSubmit={handleSubmit} noValidate>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-
-          {/* ── Cases OTP ── */}
-          <div>
-            <p style={{
-              fontSize: '.8125rem', fontWeight: 600,
-              color: 'var(--clr-gray-600)', marginBottom: '12px',
-            }}>
-              Code à {TWO_FACTOR_CODE_LENGTH} chiffres (Microsoft Authenticator)
-            </p>
-
-            {/* Conteneur des cases OTP avec rôle ARIA pour l'accessibilité */}
-            <div
-              className="otp-container"
-              role="group"
-              aria-label={`Code de vérification à ${TWO_FACTOR_CODE_LENGTH} chiffres`}
-            >
-              {otp.map((digit, i) => (
-                <input
-                  key={i}
-                  // Stocker la référence pour le focus automatique
-                  ref={el => { refs.current[i] = el; }}
-                  type="text"
-                  inputMode="numeric"   // Clavier numérique sur mobile
-                  pattern="\d*"         // HTML validation : chiffres uniquement
-                  maxLength={TWO_FACTOR_CODE_LENGTH} // Permet le collage du code entier
-                  value={digit}
-                  onChange={e => handleInput(i, e.target.value)}
-                  onKeyDown={e => handleKeyDown(i, e)}
-                  onFocus={e => e.target.select()} // Sélectionner le contenu au focus
-                  autoFocus={i === 0}   // Focus automatique sur la première case
-                  // Autocomplétion OTP sur mobile (SMS OTP, etc.)
-                  autoComplete={i === 0 ? 'one-time-code' : 'off'}
-                  // Désactiver les cases pendant le chargement ou après succès
-                  disabled={isLoading || !!successMsg}
-                  aria-label={`Chiffre ${i + 1} du code`}
-                  className={[
-                    'otp-input',
-                    digit    ? 'otp-input--filled' : '',  // Case remplie : fond vert
-                    hasError ? 'otp-input--error'  : '',  // Erreur : fond rouge + animation shake
-                  ].join(' ')}
-                />
-              ))}
-            </div>
+    <AuthLayout title="Sécurité" subtitle="Entrez le code de votre application Microsoft Authenticator">
+      {errorMsg && <div className="alert alert--error">{errorMsg}</div>}
+      {successMsg && <div className="alert alert--success">{successMsg}</div>}
+      <form onSubmit={handleSubmit} style={{ marginTop: '20px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+            {otp.map((digit, i) => (
+              <input key={i} ref={(el) => { refs.current[i] = el; }} type="text" inputMode="numeric" maxLength={1} value={digit}
+                onChange={(e) => handleInput(i, e.target.value)} onKeyDown={(e) => handleKeyDown(i, e)}
+                disabled={isLoading || !!successMsg} className="otp-input"
+                style={{ width: '45px', height: '55px', textAlign: 'center', fontSize: '1.5rem', fontWeight: 'bold', borderRadius: '8px', border: '2px solid #D1D8E0' }}
+              />
+            ))}
           </div>
-
-          {/* ── Bouton vérifier ── */}
-          <Button
-            type="submit"
-            isLoading={isLoading}
-            fullWidth
-            // Désactiver si les 6 cases ne sont pas toutes remplies,
-            // si un chargement est en cours, ou si le code a déjà été validé
-            disabled={!codeIsFull || isLoading || !!successMsg}
-          >
-            Vérifier le code
-          </Button>
-
-          {/* ── Lien retour vers la page de connexion ── */}
-          <div style={{
-            textAlign: 'center',
-            borderTop: '1px solid var(--clr-gray-100)',
-            paddingTop: '14px',
-          }}>
-            <Link href={APP_ROUTES.LOGIN} style={{
-              fontSize: '.8rem',
-              color: 'var(--clr-gray-400)',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '5px',
-            }}>
-              <IconArrowLeft /> Retour à la connexion
-            </Link>
-          </div>
-
+          <Button type="submit" isLoading={isLoading} fullWidth disabled={otp.join('').length < 6 || !!successMsg}>Valider</Button>
         </div>
       </form>
     </AuthLayout>
@@ -6324,124 +6327,44 @@ export default SearchableSelect;
 
 // FILE: src/constants/auth.ts
 -----------------------------------------------
-// ============================================================
-// FICHIER  : src/constants/auth.ts
-// RÔLE     : Centralise TOUTES les constantes de l'application.
-//
-// ✅ BACK-END CONNECTÉ : https://gbe-8clf.onrender.com
-//
-// Pour changer d'environnement, modifier uniquement
-// NEXT_PUBLIC_API_URL dans .env.local — aucun autre fichier
-// ne doit être touché.
-// ============================================================
+// src/constants/auth.ts
 
-/**
- * URL de base de l'API back-end.
- *
- * En développement  : défini dans .env.local
- * En production     : défini dans les variables d'environnement du serveur
- *
- * Valeur par défaut → le back-end déployé sur Render
- */
-export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? 'https://gbe-8clf.onrender.com';
-
-/**
- * Préfixe commun à tous les endpoints de l'API.
- * Si le back-end change de version (v2, v3…), modifier ici uniquement.
- */
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'https://gbe-8clf.onrender.com';
 const API_PREFIX = `${API_BASE_URL}/api/v1`;
 
-/**
- * Endpoints d'authentification.
- *
- * POST /api/v1/auth/register  → Inscription
- * POST /api/v1/auth/login     → Connexion (retourne un sessionToken si 2FA actif)
- * POST /api/v1/auth/verify    → Vérification du code 2FA (TOTP)
- */
 export const AUTH_ENDPOINTS = {
   REGISTER:    `${API_PREFIX}/auth/register`,
   LOGIN:       `${API_PREFIX}/auth/login`,
   VERIFY_2FA:  `${API_PREFIX}/auth/verify`,
 } as const;
 
-/**
- * Routes de navigation Next.js.
- * Utiliser ces constantes dans router.push() plutôt que
- * des chaînes codées en dur, pour faciliter les refactors.
- */
 export const APP_ROUTES = {
   LOGIN:           '/login',
   REGISTER:        '/register',
-  REGISTER_QR:     '/register/qrcode',   // Page QR code post-inscription
-  TWO_FACTOR:      '/two-factor',         // Page saisie code OTP
+  REGISTER_QR:     '/register/qrcode',
+  TWO_FACTOR:      '/two-factor',
   FORGOT_PASSWORD: '/forgot-password',
-  DASHBOARD:       '/dashboard',          // Page d'accueil après connexion (fallback)
+  DASHBOARD:       '/dashboard', // Fallback
 
-  // ── Dashboards par rôle ──────────────────────────────────
-  // Chaque rôle a sa propre page d'accueil après connexion réussie.
-  // Ces routes correspondent aux valeurs exactes de roleSysteme
-  // retournées par le back-end dans userContext.affectations[0].roleSysteme
-
-  /** Administrateur système → tableau de bord d'administration */
-  ADMIN_DASHBOARD:                    '/admin/dashboard',
-
-  /** Ordonnateur principal → tableau de bord ordonnateur principal */
-  ORDONNATEUR_PRINCIPAL_DASHBOARD:    '/ordonnateur-principal/dashboard',
-
-  /** Ordonnateur secondaire → tableau de bord ordonnateur secondaire */
-  ORDONNATEUR_SECONDAIRE_DASHBOARD:   '/ordonnateur-secondaire/dashboard',
-
-  /** Ordonnateur délégué → tableau de bord ordonnateur délégué */
-  ORDONNATEUR_DELEGUE_DASHBOARD:      '/ordonnateur-delegue/dashboard',
-
-  /** Contrôleur financier → tableau de bord contrôleur financier */
-  CONTROLEUR_FINANCIER_DASHBOARD:     '/controleur-financier/dashboard',
-
-  /** Comptable → tableau de bord comptable */
-  COMPTABLE_DASHBOARD:                '/comptable/dashboard',
-
+  // Routes spécifiques par rôle
+  ADMIN_DASHBOARD:          '/admin/dashboard',
+  ORD_PRINCIPAL_DASHBOARD:  '/ordonnateur-principal/dashboard',
+  ORD_SECONDAIRE_DASHBOARD: '/ordonnateur-secondaire/dashboard',
+  ORD_DELEGUE_DASHBOARD:    '/ordonnateur-delegue/dashboard',
+  CF_DASHBOARD:             '/controleur-financier/dashboard',
+  COMPTABLE_DASHBOARD:      '/comptable/dashboard',
 } as const;
 
-/**
- * Mapping rôle → route du dashboard correspondant.
- *
- * Clés   = valeurs exactes de roleSysteme retournées par le back-end
- * Valeurs = routes Next.js vers lesquelles rediriger l'utilisateur
- *
- * Utilisation dans two-factor/page.tsx :
- *   const route = ROLE_DASHBOARD_ROUTES[roleSysteme] ?? APP_ROUTES.DASHBOARD;
- *   router.push(route);
- */
-export const ROLE_DASHBOARD_ROUTES: Record<string, string> = {
-  // L'admin est redirigé vers /admin/dashboard (page déjà existante)
-  'ADMIN':                     APP_ROUTES.ADMIN_DASHBOARD,
-
-  // L'ordonnateur principal est redirigé vers son dashboard dédié
-  'ORDONNATEUR_PRINCIPAL':     APP_ROUTES.ORDONNATEUR_PRINCIPAL_DASHBOARD,
-
-  // L'ordonnateur secondaire est redirigé vers son dashboard dédié
-  'ORDONNATEUR_SECONDAIRE':    APP_ROUTES.ORDONNATEUR_SECONDAIRE_DASHBOARD,
-
-  // L'ordonnateur délégué est redirigé vers son dashboard dédié
-  'ORDONNATEUR_DELEGUE':       APP_ROUTES.ORDONNATEUR_DELEGUE_DASHBOARD,
-
-  // Le contrôleur financier est redirigé vers son dashboard dédié
-  'CONTROLEUR_FINANCIER':      APP_ROUTES.CONTROLEUR_FINANCIER_DASHBOARD,
-
-  // Le comptable est redirigé vers son dashboard dédié
-  'COMPTABLE':                 APP_ROUTES.COMPTABLE_DASHBOARD,
+// Mapping exact entre le roleSysteme du backend et les routes
+export const ROLE_ROUTES: Record<string, string> = {
+  'ADMIN':                  '/admin/dashboard',
+  'ORDONNATEUR_PRINCIPAL':  '/ordonnateur-principal/dashboard',
+  'ORDONNATEUR_SECONDAIRE': '/ordonnateur-secondaire/dashboard',
+  'ORDONNATEUR_DELEGUE':    '/ordonnateur-delegue/dashboard',
+  'CONTROLEUR_FINANCIER':   '/controleur-financier/dashboard',
+  'COMPTABLE':              '/comptable/dashboard',
 };
 
-/**
- * Durée de validité du code 2FA en secondes (5 minutes).
- * Affichée dans le minuteur de la page two-factor.
- */
-export const TWO_FACTOR_CODE_EXPIRY_SECONDS = 300;
-
-/**
- * Nombre de chiffres du code OTP affiché par les cases.
- */
 export const TWO_FACTOR_CODE_LENGTH = 6;
 
 // END OF FILE: src/constants/auth.ts
@@ -6516,22 +6439,7 @@ export const MOCK_PROGRAMMES: Programme[] = [
 -----------------------------------------------
 // ============================================================
 // FICHIER  : src/lib/authService.ts
-// RÔLE     : Couche d'abstraction entre les composants React
-//            et l'API back-end GBE.
-//
-// Gestion d'erreurs :
-//   - Les erreurs HTTP sont converties en ApiError typée
-//   - Les codes d'erreur back-end sont exploitables dans les composants
-//   - Les erreurs de validation par champ sont extraites et mappées
-//
-// ── MODIFICATION APPORTÉE ──────────────────────────────────
-//   Ajout de deux fonctions pour persister le contexte utilisateur
-//   (userContext) retourné par /api/v1/auth/verify :
-//     - saveUserContext(ctx)  → stocke dans localStorage
-//     - getUserContext()      → lit depuis localStorage
-//   Ces fonctions permettent à two-factor/page.tsx de lire
-//   le roleSysteme et rediriger vers le bon dashboard.
-// ──────────────────────────────────────────────────────────
+// RÔLE     : Couche d'abstraction entre le Front et l'API GBE
 // ============================================================
 
 import {
@@ -6543,158 +6451,103 @@ import {
   RegisterResponse,
   VerifyResponse,
   GenericResponse,
-  BackendErrorResponse,
   ApiError,
-  ERROR_MESSAGES,
-  FIELD_MAP,
-  UserContext,   // ← NOUVEAU : type du contexte utilisateur
+  UserContext,
 } from '@/types/auth';
 import { AUTH_ENDPOINTS } from '@/constants/auth';
 
-// Headers JSON envoyés avec chaque requête POST
+// Headers standards pour les requêtes JSON
 const JSON_HEADERS: HeadersInit = {
   'Content-Type': 'application/json',
   'Accept':       'application/json',
 };
 
-// ─────────────────────────────────────────────────────────────
-// UTILITAIRE INTERNE
-// ─────────────────────────────────────────────────────────────
-
 /**
- * Construit un ApiError à partir de la réponse d'erreur du back-end.
- * Extrait le code, le message lisible et les erreurs par champ.
+ * Utilitaire interne pour centraliser les appels POST et la gestion d'erreurs
  */
-function buildApiError(body: BackendErrorResponse, httpStatus: number): ApiError {
-  // ── Cas 1 : erreurs de validation par champ (400 MethodArgumentNotValid)
-  if (body.validationsErros && body.validationsErros.length > 0) {
-    const fieldErrors: Record<string, string> = {};
-    let globalMessage = 'Certains champs sont invalides. Vérifiez le formulaire.';
-
-    body.validationsErros.forEach(ve => {
-      // Convertir le nom de champ back-end → nom de champ formulaire React
-      const formKey = FIELD_MAP[ve.field] ?? ve.field;
-      // Utiliser le message traduit si disponible, sinon le message brut
-      fieldErrors[formKey] = ERROR_MESSAGES[ve.code] ?? ve.message ?? 'Champ invalide.';
-    });
-
-    return new ApiError(globalMessage, body.code, fieldErrors, httpStatus);
-  }
-
-  // ── Cas 2 : erreur métier avec code (ex: EMAIL_ALREADY_EXISTS)
-  if (body.code) {
-    const humanMessage = ERROR_MESSAGES[body.code] ?? body.message ?? `Erreur : ${body.code}`;
-    return new ApiError(humanMessage, body.code, {}, httpStatus);
-  }
-
-  // ── Cas 3 : message brut sans code structuré
-  const fallback = body.message ?? `Erreur HTTP ${httpStatus}`;
-  return new ApiError(fallback, undefined, {}, httpStatus);
-}
-
-/**
- * Exécute un POST JSON et retourne le corps parsé.
- * Lève un ApiError en cas d'erreur HTTP ou réseau.
- */
-async function postJson<TPayload, TResponse>(
-  url:     string,
-  payload: TPayload,
-  token?:  string,
-): Promise<TResponse> {
-  // Construire les headers (avec token Bearer si fourni)
-  const headers: HeadersInit = { ...JSON_HEADERS };
-  if (token) {
-    (headers as Record<string, string>)['Authorization'] = `Bearer ${token}`;
-  }
-
+async function postJson<TPayload, TResponse>(url: string, payload: TPayload): Promise<TResponse> {
   let response: Response;
+  
   try {
-    // Appel fetch vers l'API back-end
     response = await fetch(url, {
-      method:  'POST',
-      headers,
-      body:    JSON.stringify(payload),
+      method: 'POST',
+      headers: JSON_HEADERS,
+      body: JSON.stringify(payload),
     });
-  } catch {
-    // Erreur réseau (pas de connexion, serveur injoignable…)
-    throw new ApiError(
-      'Impossible de joindre le serveur. Vérifiez votre connexion internet.',
-      undefined,
-      {},
-      0,
-    );
+  } catch (err) {
+    // Erreur réseau (serveur éteint ou pas d'internet)
+    throw new ApiError('Impossible de joindre le serveur. Vérifiez votre connexion.');
   }
 
-  // Lire le corps de la réponse (même en cas d'erreur HTTP)
-  let data: TResponse & BackendErrorResponse;
-  try {
-    data = await response.json();
-  } catch {
-    // La réponse n'est pas du JSON valide
-    throw new ApiError(
-      `Réponse invalide du serveur (HTTP ${response.status}).`,
-      undefined,
-      {},
-      response.status,
-    );
-  }
+  const data = await response.json();
 
-  // Si le statut HTTP indique une erreur, construire un ApiError
   if (!response.ok) {
-    throw buildApiError(data as BackendErrorResponse, response.status);
+    // On jette une erreur typée avec le code et le message du backend
+    throw new ApiError(
+      data.message || 'Une erreur est survenue',
+      data.code,
+      {},
+      response.status
+    );
   }
 
   return data;
 }
 
 // ─────────────────────────────────────────────────────────────
-// FONCTIONS PUBLIQUES — APPELS API
+// FONCTIONS D'AUTHENTIFICATION (APPELS API)
 // ─────────────────────────────────────────────────────────────
 
-/** Inscription d'un nouvel utilisateur */
+/**
+ * Inscription d'un nouvel utilisateur
+ * Utilisée dans : src/app/register/page.tsx
+ */
 export async function registerUser(payload: RegisterPayload): Promise<RegisterResponse> {
   return postJson<RegisterPayload, RegisterResponse>(AUTH_ENDPOINTS.REGISTER, payload);
 }
 
-/** Connexion avec email + mot de passe */
+/**
+ * Connexion initiale (Email + Password)
+ * Utilisée dans : src/app/login/page.tsx
+ */
 export async function loginUser(payload: LoginPayload): Promise<LoginResponse> {
   return postJson<LoginPayload, LoginResponse>(AUTH_ENDPOINTS.LOGIN, payload);
 }
 
 /**
- * Vérification du code TOTP à 6 chiffres (2FA).
- *
- * La réponse contient :
- *   - accessToken  → JWT à stocker
- *   - userContext  → infos utilisateur + affectations avec roleSysteme
- *
- * C'est en lisant userContext.affectations[0].roleSysteme que
- * two-factor/page.tsx détermine vers quel dashboard rediriger.
+ * Vérification du code 2FA à 6 chiffres
+ * Utilisée dans : src/app/two-factor/page.tsx
  */
 export async function verifyTwoFactor(payload: VerifyPayload): Promise<VerifyResponse> {
-  return postJson<VerifyPayload, VerifyResponse>(AUTH_ENDPOINTS.VERIFY_2FA, payload);
+  // On force le code en String pour ne pas perdre le "0" au début si présent
+  return postJson<VerifyPayload, VerifyResponse>(AUTH_ENDPOINTS.VERIFY_2FA, {
+    email: payload.email.trim(),
+    code:  String(payload.code).trim()
+  });
 }
 
-/** Demande de réinitialisation du mot de passe */
+/**
+ * Demande de réinitialisation de mot de passe
+ */
 export async function forgotPassword(payload: ForgotPasswordPayload): Promise<GenericResponse> {
   return postJson<ForgotPasswordPayload, GenericResponse>(
     `https://gbe-8clf.onrender.com/api/v1/auth/forgot-password`,
-    payload,
+    payload
   );
 }
 
 // ─────────────────────────────────────────────────────────────
-// GESTION DU TOKEN JWT EN SESSION
+// GESTION DU STOCKAGE LOCAL (LOCALSTORAGE)
 // ─────────────────────────────────────────────────────────────
 
-/** Sauvegarde le JWT d'accès dans localStorage */
+/** Sauvegarde le token JWT d'accès */
 export function saveAccessToken(token: string): void {
   if (typeof window !== 'undefined') {
     localStorage.setItem('gbe_access_token', token);
   }
 }
 
-/** Lit le JWT d'accès depuis localStorage (null si absent) */
+/** Récupère le token JWT d'accès */
 export function getAccessToken(): string | null {
   if (typeof window !== 'undefined') {
     return localStorage.getItem('gbe_access_token');
@@ -6702,64 +6555,40 @@ export function getAccessToken(): string | null {
   return null;
 }
 
-/** Supprime le JWT et le contexte utilisateur (déconnexion) */
-export function clearTokens(): void {
-  if (typeof window !== 'undefined') {
-    localStorage.removeItem('gbe_access_token');
-    // ← NOUVEAU : on efface aussi le contexte utilisateur à la déconnexion
-    localStorage.removeItem('gbe_user_context');
-    sessionStorage.removeItem('gbe_email_2fa');
-  }
-}
-
-// ─────────────────────────────────────────────────────────────
-// GESTION DU CONTEXTE UTILISATEUR  ← NOUVEAU
-// ─────────────────────────────────────────────────────────────
-
-/**
- * Sauvegarde le userContext retourné par /api/v1/auth/verify
- * dans localStorage sous la clé 'gbe_user_context'.
- *
- * Appelée dans two-factor/page.tsx après vérification 2FA réussie,
- * avant la redirection vers le dashboard.
- *
- * Le userContext contient notamment :
- *   - firstName, lastName, email → pour afficher le nom dans la navbar
- *   - affectations[0].roleSysteme → pour la redirection et l'autorisation
- *
- * @param ctx - Le userContext retourné par le back-end
+/** 
+ * Sauvegarde le contexte utilisateur complet (Nom, Rôle, Affectations)
+ * C'est ce qui permet de savoir si l'utilisateur est ADMIN ou ORDONNATEUR
  */
 export function saveUserContext(ctx: UserContext): void {
-  if (typeof window !== 'undefined') {
-    // Sérialiser l'objet en JSON pour le stocker dans localStorage
+  if (typeof window !== 'undefined' && ctx) {
     localStorage.setItem('gbe_user_context', JSON.stringify(ctx));
   }
 }
 
-/**
- * Lit et désérialise le userContext depuis localStorage.
- *
- * Utilisée par les pages de dashboard pour :
- *   - Afficher le nom de l'utilisateur dans la navbar
- *   - Vérifier le rôle et bloquer l'accès si non autorisé
- *
- * @returns Le UserContext ou null si absent / invalide
- */
+/** Récupère le contexte utilisateur stocké */
 export function getUserContext(): UserContext | null {
   if (typeof window !== 'undefined') {
     const raw = localStorage.getItem('gbe_user_context');
     if (!raw) return null;
-
     try {
-      // Désérialiser le JSON stocké
       return JSON.parse(raw) as UserContext;
     } catch {
-      // Si le JSON est corrompu, on efface et on retourne null
-      localStorage.removeItem('gbe_user_context');
       return null;
     }
   }
   return null;
+}
+
+/** 
+ * Nettoie toutes les données de session (Déconnexion)
+ */
+export function clearTokens(): void {
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem('gbe_access_token');
+    localStorage.removeItem('gbe_user_context');
+    sessionStorage.removeItem('gbe_email_2fa');
+    sessionStorage.removeItem('gbe_qr_code');
+  }
 }
 
 // END OF FILE: src/lib/authService.ts
@@ -6769,44 +6598,32 @@ export function getUserContext(): UserContext | null {
 -----------------------------------------------
 // ============================================================
 // FICHIER  : src/types/auth.ts
+// RÔLE     : Définition des interfaces pour les échanges API
 // ============================================================
 
-// ─────────────────────────────────────────────────────────────
-// PAYLOADS — ce qu'on ENVOIE au back-end
-// ─────────────────────────────────────────────────────────────
-
-/** Connexion : email + mot de passe */
 export interface LoginPayload {
   email:    string;
   password: string;
 }
 
 export interface RegisterPayload {
-  // ── 1. Informations personnelles ──
   firstName:   string;
   lastName:    string;
   email:       string;
   phoneNumber: string;
-  dateOfBirth: string; // "YYYY-MM-DD"
-
-  // ── 2. Informations professionnelles ──
-  matricule:          string;  // Matricule de la fonction publique
-  NIU:               string;  // Numéro d'Identification Unique (Impôt)
-  roleId:             string;  // ID du rôle sélectionné     (@future)
-  sectionId:          string;  // ID de la section admin      (@future)
-  programmeIds:       string[]; // IDs des programmes choisis (@future)
-
-  // ── 3. Carte Nationale d'Identité (@future) ──
+  dateOfBirth: string;
+  matricule:   string;
+  NIU:         string;
+  roleId:      string;
+  sectionId:   string;
+  programmeIds:string[];
   cniNumber:       string;
-  cniDeliveryDate: string; // "YYYY-MM-DD"
-  cniValidityDate: string; // "YYYY-MM-DD"
-  cniExpiryDate:   string; // "YYYY-MM-DD"
-
-  // ── 4. Sécurité ──
+  cniDeliveryDate: string;
+  cniValidityDate: string;
+  cniExpiryDate:   string;
   password:        string;
   confirmPassword: string;
   mfaEnabled:      boolean;
-  secretImgUri?:   string;
 }
 
 export interface VerifyPayload {
@@ -6814,297 +6631,72 @@ export interface VerifyPayload {
   code:  string;
 }
 
-export interface ForgotPasswordPayload {
-  email: string;
-}
+// --- STRUCTURE DU CONTEXTE UTILISATEUR (JSON BACKEND) ---
 
-// ─────────────────────────────────────────────────────────────
-// DONNÉES DE RÉFÉRENCE — fournies par le back-end (@future)
-// Pour l'instant données mockées dans registerMockData.ts
-// ─────────────────────────────────────────────────────────────
-
-/** Un rôle dans l'application GBE */
-export interface Role {
-  id:    string;
-  label: string; // Ex: "Administrateur", "Gestionnaire de budget"
-}
-
-/** Une section administrative (ministère / direction) */
-export interface Section {
-  id:    string;
-  code:  string; // Ex: "MIN-FI-001"
-  label: string; // Ex: "Direction Générale du Budget"
-}
-
-/** Un programme budgétaire */
-export interface Programme {
-  id:    string;
-  code:  string; // Ex: "P-001"
-  label: string; // Ex: "Programme de Santé Publique"
-}
-
-// ─────────────────────────────────────────────────────────────
-// TYPES RÔLES SYSTÈME
-// Valeurs exactes retournées par le back-end dans
-// userContext.affectations[0].roleSysteme
-// ─────────────────────────────────────────────────────────────
-
-/**
- * Tous les rôles possibles retournés par le back-end.
- * Utilisé pour typer roleSysteme dans Affectation.
- */
-export type RoleSysteme =
-  | 'ADMIN'
-  | 'ORDONNATEUR_PRINCIPAL'
-  | 'ORDONNATEUR_SECONDAIRE'
-  | 'ORDONNATEUR_DELEGUE'
-  | 'CONTROLEUR_FINANCIER'
-  | 'COMPTABLE';
-
-// ─────────────────────────────────────────────────────────────
-// TYPES CONTEXTE UTILISATEUR
-// Structure retournée par le back-end après vérification 2FA
-// dans le champ userContext de la réponse /api/v1/auth/verify
-// ─────────────────────────────────────────────────────────────
-
-/**
- * Une affectation de l'utilisateur :
- * relie un utilisateur à un rôle, une section et un programme budgétaire.
- * Un utilisateur peut avoir plusieurs affectations.
- */
 export interface Affectation {
-  /** Identifiant unique de l'affectation */
   affectationId:    string;
-
-  /** Rôle système de l'utilisateur pour cette affectation */
-  roleSysteme:      RoleSysteme;
-
-  /** Identifiant de la section administrative */
+  roleSysteme:      string; // "ADMIN", "ORDONNATEUR_PRINCIPAL", etc.
   sectionId:        string;
-
-  /** Libellé de la section (ex: "Ministère des Finances") */
   sectionLibelle:   string;
-
-  /** Code de la section (ex: "20") */
   sectionCode:      string;
-
-  /** Identifiant du programme budgétaire */
   programmeId:      string;
-
-  /** Libellé du programme (ex: "Pilotage et coordination") */
   programmeLibelle: string;
-
-  /** Code du programme (ex: "001") */
   programmeCode:    string;
-
-  /**
-   * Liste des permissions accordées à l'utilisateur
-   * pour cette affectation (ex: ["MANAGE_USERS", "MANAGE_AFFECTATIONS"])
-   */
   permissions:      string[];
-
-  /** Indique si l'affectation est active */
   actif:            boolean;
 }
 
-/**
- * Contexte complet de l'utilisateur connecté.
- * Retourné par le back-end après vérification réussie du code 2FA.
- * Contient toutes les informations nécessaires à l'affichage et
- * à la navigation vers le bon dashboard.
- */
 export interface UserContext {
-  /** Identifiant unique de l'utilisateur (UUID) */
-  userId:      string;
-
-  /** Prénom de l'utilisateur */
-  firstName:   string;
-
-  /** Nom de famille de l'utilisateur */
-  lastName:    string;
-
-  /** Adresse email de l'utilisateur */
-  email:       string;
-
-  /** Matricule de la fonction publique (peut être null pour l'admin) */
-  matricule:   string | null;
-
-  /** Numéro d'identification unique fiscal (peut être null pour l'admin) */
-  nui:         string | null;
-
-  /** Numéro de CNI (peut être null pour l'admin) */
-  cni:         string | null;
-
-  /**
-   * Liste des affectations de l'utilisateur.
-   * On lit affectations[0].roleSysteme pour déterminer
-   * vers quel dashboard rediriger l'utilisateur.
-   */
+  userId:       string;
+  firstName:    string;
+  lastName:     string;
+  email:        string;
+  matricule:    string | null;
+  nui:          string | null;
+  cni:          string | null;
   affectations: Affectation[];
 }
 
-// ─────────────────────────────────────────────────────────────
-// RÉPONSES — ce que le back-end RETOURNE
-// ─────────────────────────────────────────────────────────────
-
-export interface RegisterResponse {
-  mfaEnabled?:     boolean;
-  secretImageUri?: string;
-  qrCodeUrl?:      string;
-  qrCode?:         string;
-  message?:        string;
-}
+// --- RÉPONSES API ---
 
 export interface LoginResponse {
-  success?:      boolean;
-  message?:      string;
-  accessToken?:  string;
-  refreshToken?: string;
-  mfaEnabled?:   boolean;
-  email?:        string;
+  success?:        boolean;
+  message?:        string;
+  accessToken?:    string;
+  mfaEnabled?:     boolean;
+  firstLogin?:     boolean;
+  secretImageUri?: string; // QR Code Base64
 }
 
-/**
- * Réponse complète retournée par POST /api/v1/auth/verify
- * après vérification réussie du code TOTP à 6 chiffres.
- *
- * C'est dans cette réponse que se trouve le roleSysteme
- * via userContext.affectations[0].roleSysteme
- */
 export interface VerifyResponse {
-  /** JWT d'accès à stocker dans localStorage */
-  accessToken?:   string;
-
-  /** JWT de rafraîchissement */
-  refreshToken?:  string;
-
-  /** Type du token (toujours "Bearer") */
-  tokenType?:     string;
-
-  /** Indique si le 2FA est activé pour cet utilisateur */
-  mfaEnabled?:    boolean;
-
-  /** Indique si c'est la première connexion de l'utilisateur */
-  firstLogin?:    boolean;
-
-  /**
-   * Contexte complet de l'utilisateur connecté.
-   * Contient les affectations avec roleSysteme pour la redirection.
-   * ⚠️  Peut être absent si la réponse est une erreur.
-   */
-  userContext?:   UserContext;
-
-  /** Message retourné par le back-end (succès ou erreur) */
-  message?:       string;
-
-  /** Indicateur de succès (false si erreur) */
-  success?:       boolean;
-}
-
-export interface GenericResponse {
-  success?: boolean;
-  message?: string;
-}
-
-// ─────────────────────────────────────────────────────────────
-// ERREURS BACK-END
-// ─────────────────────────────────────────────────────────────
-
-export type BackendErrorCode =
-  | 'EMAIL_ALREADY_EXISTS'
-  | 'PHONE_NUMBER_ALREADY_EXISTS'
-  | 'PASSWORD_MISMATCH'
-  | 'BAD_CREDENTIALS'
-  | 'ERR_USER_DISABLED'
-  | 'USER_NOT_FOUND'
-  | 'USERNAME_NOT_FOUND'
-  | 'CHANGE_PASSWORD_MISMATCH'
-  | 'INVALID_CURRENT_PASSWORD'
-  | 'ACCOUNT_ALREADY_DEACTIVATED'
-  | 'ENTITY_NOT_FOUND'
-  | 'METHODE_ARGUMENT_NOT_VALID'
-  | 'INTERNAL_EXCEPTION';
-
-export interface BackendValidationError {
-  field:   string;
-  code:    string;
-  message: string;
+  accessToken:  string;
+  refreshToken: string;
+  tokenType:    string;
+  mfaEnabled:   boolean;
+  firstLogin:   boolean;
+  userContext:  UserContext; // Contient le rôle
+  message?:     string;
+  success?:     boolean;
 }
 
 export interface BackendErrorResponse {
-  code?:             BackendErrorCode | string;
-  message?:          string;
-  validationsErros?: BackendValidationError[]; // Typo volontaire : correspond au back-end Java
+  code?:    string;
+  message?: string;
+  validationsErros?: { field: string; code: string; message: string }[];
 }
 
 export class ApiError extends Error {
-  public readonly code:        BackendErrorCode | string | undefined;
+  public readonly code:        string | undefined;
   public readonly fieldErrors: Record<string, string>;
   public readonly httpStatus:  number;
 
-  constructor(
-    message:      string,
-    code?:        BackendErrorCode | string,
-    fieldErrors?: Record<string, string>,
-    httpStatus?:  number,
-  ) {
+  constructor(message: string, code?: string, fieldErrors?: Record<string, string>, httpStatus?: number) {
     super(message);
-    this.name        = 'ApiError';
-    this.code        = code;
+    this.code = code;
     this.fieldErrors = fieldErrors ?? {};
-    this.httpStatus  = httpStatus  ?? 0;
+    this.httpStatus = httpStatus ?? 0;
   }
 }
-
-export const ERROR_MESSAGES: Record<string, string> = {
-  EMAIL_ALREADY_EXISTS:
-    'Cette adresse email est déjà associée à un compte existant.',
-  PHONE_NUMBER_ALREADY_EXISTS:
-    'Ce numéro de téléphone est déjà associé à un autre compte.',
-  PASSWORD_MISMATCH:
-    'Les mots de passe ne correspondent pas.',
-  BAD_CREDENTIALS:
-    'Email ou mot de passe incorrect. Vérifiez vos identifiants.',
-  ERR_USER_DISABLED:
-    "Votre compte est désactivé. Contactez l'administrateur.",
-  USER_NOT_FOUND:
-    'Aucun compte trouvé avec ces informations.',
-  USERNAME_NOT_FOUND:
-    'Aucun compte trouvé avec cette adresse email.',
-  CHANGE_PASSWORD_MISMATCH:
-    'Le nouveau mot de passe et sa confirmation ne correspondent pas.',
-  INVALID_CURRENT_PASSWORD:
-    'Le mot de passe actuel saisi est incorrect.',
-  ACCOUNT_ALREADY_DEACTIVATED:
-    'Ce compte est déjà désactivé.',
-  INTERNAL_EXCEPTION:
-    'Une erreur interne est survenue. Veuillez réessayer.',
-  METHODE_ARGUMENT_NOT_VALID:
-    'Certains champs du formulaire sont invalides.',
-  'VALIDATION.REGISTRATION.EMAIL.NOT_BLANK':      "L'adresse email est requise.",
-  'VALIDATION.REGISTRATION.EMAIL.FORMAT':         "L'adresse email est invalide.",
-  'VALIDATION.REGISTRATION.PASSWORD.NOT_BLANK':   'Le mot de passe est requis.',
-  'VALIDATION.REGISTRATION.PASSWORD.SIZE':        'Le mot de passe doit faire entre 8 et 72 caractères.',
-  'VALIDATION.REGISTRATION.CONFIRM_PASSWORD.WEAK':'Le mot de passe doit contenir une majuscule, une minuscule, un chiffre et un caractère spécial.',
-  'VALIDATION.REGISTRATION.FIRSTNAME.NOT_BLANK':  'Le prénom est requis.',
-  'VALIDATION.REGISTRATION.FIRSTNAME.SIZE':       'Le prénom doit faire entre 1 et 50 caractères.',
-  'VALIDATION.REGISTRATION.LASTNAME.NOT_BLANK':   'Le nom de famille est requis.',
-  'VALIDATION.REGISTRATION.LASTNAME.SIZE':        'Le nom de famille doit faire entre 1 et 50 caractères.',
-  'VALIDATION.REGISTRATION.PHONE.FORMAT':         'Format de téléphone invalide. Exemple : +237 6XX XXX XXX',
-  'VALIDATION.AUTHENTICATION.EMAIL.NOT_BLANK':    "L'adresse email est requise.",
-  'VALIDATION.AUTHENTICATION.EMAIL.FORMAT':       "L'adresse email est invalide.",
-  'VALIDATION.AUTHENTICATION.PASSWORD.NOT_BLANK': 'Le mot de passe est requis.',
-};
-
-export const FIELD_MAP: Record<string, string> = {
-  email:           'email',
-  password:        'password',
-  confirmPassword: 'confirmPassword',
-  firstName:       'firstName',
-  lastName:        'lastName',
-  phoneNumber:     'phoneNumber',
-  dateOfBirth:     'dateOfBirth',
-};
 
 export type FormErrors = Record<string, string | undefined>;
 

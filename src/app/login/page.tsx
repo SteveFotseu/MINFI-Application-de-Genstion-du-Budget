@@ -2,6 +2,18 @@
 
 // ============================================================
 // FICHIER  : src/app/login/page.tsx
+//
+// WORKFLOW CONNEXION :
+//
+//  1ère connexion  → firstLogin: true
+//    Back-end retourne : { firstLogin: true, mfaEnabled: false, secretImageUri: "...", mfaToken: "..." }
+//    → Stocker QR code + email + mfaToken en sessionStorage
+//    → Rediriger vers /register/qrcode
+//
+//  Connexions suivantes → firstLogin: false
+//    Back-end retourne : { firstLogin: false, mfaEnabled: true, mfaToken: "..." }
+//    → Stocker email + mfaToken en sessionStorage
+//    → Rediriger vers /two-factor
 // ============================================================
 
 import React, { useState } from 'react';
@@ -47,7 +59,7 @@ const IconShield = () => (
 const IconAlert = () => (
   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="alert__icon">
     <circle cx="12" cy="12" r="10"/>
-    <line x1="12" y1="8"  x2="12"    y2="12"/>
+    <line x1="12" y1="8" x2="12" y2="12"/>
     <line x1="12" y1="16" x2="12.01" y2="16"/>
   </svg>
 );
@@ -57,7 +69,7 @@ function validate(email: string, password: string): FormErrors {
   if (!email.trim())
     e.email = "L'adresse email est requise.";
   else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
-    e.email = "L'adresse email est invalide (ex : prenom.nom@minfi.cm).";
+    e.email = "L'adresse email est invalide.";
   if (!password)
     e.password = 'Le mot de passe est requis.';
   return e;
@@ -83,6 +95,7 @@ export default function LoginPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
     const errors = validate(email, password);
     if (Object.keys(errors).length > 0) { setFieldErrors(errors); return; }
 
@@ -93,19 +106,44 @@ export default function LoginPage() {
     try {
       const data = await loginUser({ email, password });
 
-      if (data.mfaEnabled === true) {
+      // ══════════════════════════════════════════════════════
+      // CAS 1 — PREMIÈRE CONNEXION (firstLogin: true)
+      // Back-end : { firstLogin: true, mfaEnabled: false, secretImageUri: "...", mfaToken: "..." }
+      // → Afficher le QR code à scanner (une seule fois dans la vie du compte)
+      // ══════════════════════════════════════════════════════
+      if (data.firstLogin === true) {
         sessionStorage.setItem('gbe_email_2fa', email);
+        // Stocker le mfaToken — indispensable pour setup-mfa
+        if (data.mfaToken) sessionStorage.setItem('gbe_mfa_token', data.mfaToken);
+        // Stocker le QR code à afficher
+        if (data.secretImageUri) sessionStorage.setItem('gbe_qr_code', data.secretImageUri);
+        router.push(APP_ROUTES.REGISTER_QR);
+        return;
+      }
+
+      // ══════════════════════════════════════════════════════
+      // CAS 2 — CONNEXIONS SUIVANTES (firstLogin: false)
+      // Back-end : { firstLogin: false, mfaEnabled: true, mfaToken: "..." }
+      // → L'utilisateur saisit son code TOTP sans scanner le QR
+      // ══════════════════════════════════════════════════════
+      if (data.firstLogin === false) {
+        sessionStorage.setItem('gbe_email_2fa', email);
+        // Stocker le mfaToken — indispensable pour verify
+        if (data.mfaToken) sessionStorage.setItem('gbe_mfa_token', data.mfaToken);
         router.push(APP_ROUTES.TWO_FACTOR);
         return;
       }
 
+      // ══════════════════════════════════════════════════════
+      // CAS 3 — SANS 2FA (accessToken retourné directement)
+      // ══════════════════════════════════════════════════════
       if (data.accessToken) {
         saveAccessToken(data.accessToken);
         router.push(APP_ROUTES.DASHBOARD);
         return;
       }
 
-      setApiError(`Réponse inattendue du serveur. Champs reçus : ${Object.keys(data).join(', ')}`);
+      setApiError("Réponse inattendue du serveur. Veuillez contacter l'administrateur.");
 
     } catch (err) {
       if (err instanceof ApiError) {
@@ -113,16 +151,15 @@ export default function LoginPage() {
           setFieldErrors(err.fieldErrors);
         } else {
           setApiError(err.message);
-          if (err.code === 'BAD_CREDENTIALS') {
+          if (err.code === 'BAD_CREDENTIALS')
             setFieldErrors({ email: ' ', password: ' ' });
-          } else if (err.code === 'USER_NOT_FOUND' || err.code === 'USERNAME_NOT_FOUND') {
+          else if (err.code === 'USER_NOT_FOUND' || err.code === 'USERNAME_NOT_FOUND')
             setFieldErrors({ email: 'Aucun compte trouvé avec cette adresse email.' });
-          } else if (err.code === 'ERR_USER_DISABLED') {
-            setFieldErrors({ email: 'Ce compte est désactivé.' });
-          }
+          else if (err.code === 'ERR_USER_DISABLED')
+            setFieldErrors({ email: 'Ce compte est désactivé. Contactez votre administrateur.' });
         }
       } else {
-        setApiError('Une erreur inattendue est survenue. Veuillez réessayer.');
+        setApiError('Une erreur inattendue est survenue. Vérifiez votre connexion et réessayez.');
       }
     } finally {
       setIsLoading(false);
@@ -131,6 +168,7 @@ export default function LoginPage() {
 
   return (
     <AuthLayout title="Connexion" subtitle="Accédez à votre espace de gestion budgétaire">
+
       {apiError && (
         <div className="alert alert--error" role="alert">
           <IconAlert /> {apiError}
@@ -139,6 +177,7 @@ export default function LoginPage() {
 
       <form onSubmit={handleSubmit} noValidate>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+
           <Input
             id="email" name="email" type="email"
             label="Adresse email" placeholder="prenom.nom@minfi.cm"
@@ -158,7 +197,7 @@ export default function LoginPage() {
               rightElement={
                 <button type="button" className="pwd-toggle"
                   onClick={() => setShowPwd(v => !v)}
-                  aria-label={showPwd ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}>
+                  aria-label={showPwd ? 'Masquer' : 'Afficher'}>
                   {showPwd ? <IconEyeOff /> : <IconEye />}
                 </button>
               }
@@ -168,12 +207,15 @@ export default function LoginPage() {
             </Link>
           </div>
 
-          <Button type="submit" isLoading={isLoading} fullWidth>Se connecter</Button>
+          <Button type="submit" isLoading={isLoading} fullWidth>
+            Se connecter
+          </Button>
 
           <div className="secure-badge">
             <IconShield />
             Connexion sécurisée – MINFI Cameroun
           </div>
+
         </div>
       </form>
 
@@ -181,6 +223,7 @@ export default function LoginPage() {
         Pas encore de compte ?{' '}
         <Link href={APP_ROUTES.REGISTER}>Créer un compte</Link>
       </p>
+
     </AuthLayout>
   );
 }
