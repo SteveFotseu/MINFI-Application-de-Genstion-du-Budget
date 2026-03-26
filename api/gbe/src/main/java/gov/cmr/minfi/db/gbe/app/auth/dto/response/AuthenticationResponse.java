@@ -14,6 +14,7 @@ public record AuthenticationResponse(
         boolean firstLogin,
 
         String secretImageUri,
+        String mfaToken,
 
         UserContext userContext
 

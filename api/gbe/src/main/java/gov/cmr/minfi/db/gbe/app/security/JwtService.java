@@ -19,6 +19,7 @@ import java.util.Map;
 public class JwtService {
 
     private static final String TOKEN_TYPE = "token_type";
+    private static final String MFA_TOKEN_TYPE = "MFA_TOKEN";
     private final PrivateKey privateKey;
     private final PublicKey publicKey;
 
@@ -27,6 +28,11 @@ public class JwtService {
 
     @Value("${app.security.jwt.refresh-token-expiration}")
     private long refreshTokenExpiration;
+
+
+    @Value("${app.security.jwt.mfa-token-expiration}")
+    private long mfaTokenExpiration;
+
 
     public JwtService() throws Exception {
         this.privateKey = KeyUtils.loadPrivateKey("/keys/local-only/private_key.pem");
@@ -90,6 +96,29 @@ public class JwtService {
         final String username = claims.getSubject();
 
         return generateAccessToken(username);
+    }
+
+    public String generateMfaToken(final String username) {
+        final Map<String, Object> claims = Map.of(TOKEN_TYPE, MFA_TOKEN_TYPE);
+        return buildToken(username, claims, this.mfaTokenExpiration);
+    }
+
+    public void validateMfaToken(final String token) {
+        final Claims claims = extractClaims(token);
+        if (!MFA_TOKEN_TYPE.equals(claims.get(TOKEN_TYPE))) {
+            throw new RuntimeException("Invalid  token type - MFA token required");
+
+        }
+
+        if (isTokenExpired(token)) {
+            throw new RuntimeException("MFA Token  expired");
+        }
+    }
+
+    public String extractUsernameFromMfaToken(final String token) {
+        validateMfaToken(token);
+
+        return extractUsername(token);
     }
 
 

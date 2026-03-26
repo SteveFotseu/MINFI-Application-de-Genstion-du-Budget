@@ -1,6 +1,7 @@
 package gov.cmr.minfi.db.gbe.app.admin.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import gov.cmr.minfi.db.gbe.app.iam.role.RoleSysteme;
 import lombok.Builder;
 
 import java.time.LocalDate;
@@ -13,11 +14,16 @@ public record UserSummaryResponse(
         String firstName,
         String lastName,
         String phoneNumber,
+        String matricule,
+        String nui,
+        String cniNumber,
         boolean enabled,
         boolean firstLogin,
         String email,
         boolean mfaEnabled,
         LocalDate createdDate,
+        RoleSysteme role,
+
         List<AffectationSummary> affectations
 
 ) {

@@ -24,7 +24,6 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.time.LocalDate;
-import java.util.List;
 
 @Configuration
 @RequiredArgsConstructor
@@ -147,7 +146,7 @@ public class DataInitializer {
                     .firstLogin(false)
                     .mfaEnabled(true)
                     .secret(tfaService.generateNewSecret())
-                    .roles(List.of(roleAdmin))
+                    .role(roleAdmin)
                     .build();
 
             userRepository.saveAndFlush(admin);
@@ -190,7 +189,7 @@ public class DataInitializer {
                     .firstLogin(true)
                     .mfaEnabled(false)
                     .secret(tfaService.generateNewSecret())
-                    .roles(List.of(roleOrdonnateur))
+                    .role(roleOrdonnateur)
                     .build();
 
             userRepository.saveAndFlush(userTest);

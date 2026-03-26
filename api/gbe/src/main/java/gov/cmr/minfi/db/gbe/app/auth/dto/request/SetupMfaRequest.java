@@ -16,6 +16,9 @@ public record SetupMfaRequest(
         @NotBlank(message = "VALIDATION.SETUP_MFA.CODE.NOT_BLANK")
         @Size(min = 6, max = 6, message = "VALIDATION.SETUP_MFA.CODE.SIZE")
         @Schema(example = "123456")
-        String code
+        String code,
+        @NotBlank(message = "VALIDATION.SETUP_MFA.TOKEN.NOT_BLANK")
+        @Schema(example = "eyJhbGciOiJSUzI1NiJ9...")
+        String mfaToken
 ) {
 }

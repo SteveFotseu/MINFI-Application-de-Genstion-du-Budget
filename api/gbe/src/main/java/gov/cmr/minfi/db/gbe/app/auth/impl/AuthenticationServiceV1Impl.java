@@ -81,11 +81,11 @@
 //        final Role userRole = this.roleRepository.findByName("ROLE_USER")
 //                .orElseThrow(() -> new EntityNotFoundException("Role user does not exists"));
 //
-//        final List<Role> roles = new ArrayList<>();
-//        roles.add(userRole);
+//        final List<Role> role = new ArrayList<>();
+//        role.add(userRole);
 //        final User user = this.userMapper.toUser(request);
 //        user.setPassword(passwordEncoder.encode(request.password()));
-//        user.setRoles(roles);
+//        user.setRole(role);
 //
 //        log.debug("Saving user {}", user);
 //

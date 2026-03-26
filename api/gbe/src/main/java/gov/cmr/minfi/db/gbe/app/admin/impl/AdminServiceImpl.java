@@ -9,6 +9,9 @@ import gov.cmr.minfi.db.gbe.app.affectation.UserAffectationRepository;
 import gov.cmr.minfi.db.gbe.app.auth.tfa.TwoFactorAuthenticationService;
 import gov.cmr.minfi.db.gbe.app.common.exception.BusinessException;
 import gov.cmr.minfi.db.gbe.app.common.exception.ErrorCode;
+import gov.cmr.minfi.db.gbe.app.iam.role.Role;
+import gov.cmr.minfi.db.gbe.app.iam.role.RoleRepository;
+import gov.cmr.minfi.db.gbe.app.iam.role.RoleSysteme;
 import gov.cmr.minfi.db.gbe.app.referentiel.administratif.Section;
 import gov.cmr.minfi.db.gbe.app.referentiel.administratif.SectionRepository;
 import gov.cmr.minfi.db.gbe.app.referentiel.programmatique.Programme;
@@ -33,6 +36,7 @@ public class AdminServiceImpl implements AdminService {
     private final PasswordEncoder passwordEncoder;
     private final ProgrammeRepository programmeRepository;
     private final UserAffectationRepository userAffectationRepository;
+    private final RoleRepository roleRepository;
 
     @Override
     @Transactional
@@ -62,6 +66,9 @@ public class AdminServiceImpl implements AdminService {
         final Section section = sectionRepository.findById(request.sectionId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.ENTITY_NOT_FOUND, request.sectionId()));
 
+        final Role role = roleRepository.findByName("ROLE_" + request.roleSysteme().name())
+                .orElseThrow(() -> new BusinessException(ErrorCode.ENTITY_NOT_FOUND, request.roleSysteme().name()));
+
         // creation de l'utilisateur
         final User user = User.builder()
                 .firstName(request.firstName())
@@ -81,6 +88,7 @@ public class AdminServiceImpl implements AdminService {
                 .phoneVerified(false)
                 .firstLogin(true)
                 .secret(tfaService.generateNewSecret())
+                .role(role)
                 .build();
 
         userRepository.save(user);
@@ -194,11 +202,14 @@ public class AdminServiceImpl implements AdminService {
                 .lastName(user.getLastName())
                 .email(user.getEmail())
                 .phoneNumber(user.getPhoneNumber())
+                .cniNumber(user.getNumeroCni())
+                .matricule(user.getMatricule())
                 .enabled(user.isEnabled())
                 .firstLogin(user.isFirstLogin())
                 .mfaEnabled(user.isMfaEnabled())
                 .createdDate(user.getCreatedDate())
                 .affectations(affectationSummaries)
+                .role(RoleSysteme.valueOf(user.getRole().getName().replace("ROLE_", "")))
                 .build();
     }
 }

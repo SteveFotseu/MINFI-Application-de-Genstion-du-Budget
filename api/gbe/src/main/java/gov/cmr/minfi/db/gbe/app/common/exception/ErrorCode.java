@@ -28,7 +28,17 @@ public enum ErrorCode {
     AFFECTATION_ALREADY_EXISTS("AFFECTATION_ALREADY_EXISTS", "Affectation already exists for this user and programme", BAD_REQUEST),
     AFFECTATION_ALREADY_ACTIVE("AFFECTATION_ALREADY_ACTIVE", "Affectation is already active", BAD_REQUEST),
     AFFECTATION_ALREADY_INACTIVE("AFFECTATION_ALREADY_INACTIVE", "Affectation is already inactive", BAD_REQUEST),
-    AFFECTATION_NOT_FOUND("AFFECTATION_NOT_FOUND", "Affectation not found for this user", NOT_FOUND);
+    AFFECTATION_NOT_FOUND("AFFECTATION_NOT_FOUND", "Affectation not found for this user", NOT_FOUND),
+    ACTION_NOT_IN_PROGRAMME("ACTION_NOT_IN_PROGRAMME", "This action does not belong to the specified programme", BAD_REQUEST),
+    PROGRAMME_NOT_IN_SECTION("PROGRAMME_NOT_IN_SECTION", "This programme does not belong to the specified section", BAD_REQUEST),
+    CREDIT_ALREADY_EXISTS("CREDIT_ALREADY_EXISTS", " this credit was already created", BAD_REQUEST),
+    NEW_AE_AMOUNT_LESS_THAN_CONSOMME("NEW_AE_AMOUNT_LESS_THAN_CONSOMME",
+            "New AE amount cannot be less than already consumed amount", BAD_REQUEST),
+    NEW_CP_AMOUNT_LESS_THAN_CONSOMME("NEW_CP_AMOUNT_LESS_THAN_CONSOMME",
+            "New CP amount cannot be less than already consumed amount", BAD_REQUEST),
+    INVALID_MFA_TOKEN("INVALID_MFA_TOKEN", "Invalid or expired MFA token", UNAUTHORIZED),
+    MFA_TOKEN_EXPIRED("MFA_TOKEN_EXPIRED", "MFA token has expired, please login again", UNAUTHORIZED),
+    ;
 
     private final String code;
     private final String defaultMessage;

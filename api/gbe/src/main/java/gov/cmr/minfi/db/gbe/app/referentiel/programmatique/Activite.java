@@ -1,8 +1,12 @@
 package gov.cmr.minfi.db.gbe.app.referentiel.programmatique;
 
 import gov.cmr.minfi.db.gbe.app.common.audit.BaseEntity;
+import gov.cmr.minfi.db.gbe.app.exercice.Exercice;
 import jakarta.persistence.*;
-import lombok.*;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
 import lombok.experimental.SuperBuilder;
 
 @Entity
@@ -17,6 +21,10 @@ public class Activite extends BaseEntity {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "ACTION_ID", nullable = false)
     private Action action;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "EXERCICE_ID", nullable = false)
+    private Exercice exercice;
 
     @Column(name = "CODE_ACTIVITE", nullable = false)
     private String codeActivite;

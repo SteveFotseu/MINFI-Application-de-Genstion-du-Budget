@@ -97,6 +97,6 @@ public class UserServiceImpl implements UserServices, UserDetailsService {
 
     @Override
     public void deleteAccount(String userId) {
-        // TODO: implémenter
+        // TODO: implémenter la méthode
     }
 }
