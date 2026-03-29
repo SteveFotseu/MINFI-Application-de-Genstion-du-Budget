@@ -2,117 +2,66 @@
 
 // ============================================================
 // FICHIER  : src/app/register/page.tsx
+// RÔLE     : Création d'un utilisateur par l'ADMINISTRATEUR.
+//
+// ACCÈS    : Réservé à l'admin connecté.
+//            Chemin : Admin Dashboard → Utilisateurs → Ajouter un utilisateur
+//
+// FLUX :
+//   1. L'admin remplit le formulaire (5 rubriques)
+//   2. Sélection section → charge les programmes de cette section (API)
+//   3. Sélection programme → charge les actions de ce programme (API)
+//   4. L'admin définit un mot de passe par défaut pour l'utilisateur
+//   5. Soumission → POST /api/v1/admin/users (avec JWT admin)
+//   6. ✅ Succès → message de confirmation + retour au dashboard admin
+//   7. ❌ Erreur → affichage du message d'erreur back-end
+//
+// DONNÉES :
+//   - Sections  : GET /api/v1/referentiel/sections
+//   - Rôles     : GET /api/v1/referentiel/roles
+//   - Programmes: GET /api/v1/referentiel/sections/{sectionId}/programmes
+//   - Actions   : GET /api/v1/referentiel/programmes/{programmeId}/actions
+//   - Création  : POST /api/v1/admin/users (avec Bearer token)
+//
+// MOT DE PASSE :
+//   L'admin définit un mot de passe temporaire.
+//   L'utilisateur le recevra par email (géré côté back-end)
+//   et devra le modifier dès sa première connexion.
 // ============================================================
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Link          from 'next/link';
 import { useRouter } from 'next/navigation';
-import AuthLayout         from '@/components/auth/AuthLayout';
 import Input              from '@/components/ui/Input';
 import Button             from '@/components/ui/Button';
 import SearchableSelect   from '@/components/ui/SearchableSelect';
-import { registerUser }   from '@/lib/authService';
-import { ApiError, FormErrors, RegisterPayload } from '@/types/auth';
-import { APP_ROUTES }     from '@/constants/auth';
-import {
-  MOCK_ROLES,
-  MOCK_SECTIONS,
-  MOCK_PROGRAMMES,
-} from '@/data/registerMockData';
+import { createUser, getAccessToken, clearTokens, getUserContext } from '@/lib/authService';
+import { ApiError, FormErrors, AdminCreateUserPayload } from '@/types/auth';
+import { ADMIN_ENDPOINTS, APP_ROUTES, REFERENTIEL_ENDPOINTS }           from '@/constants/auth';
+import type { SelectOption } from '@/components/ui/SearchableSelect';
 
 // ─────────────────────────────────────────────────────────────
-// ICÔNES
+// ICÔNES SVG INLINE
 // ─────────────────────────────────────────────────────────────
-const IconUser = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-    <circle cx="12" cy="7" r="4"/>
-  </svg>
-);
-const IconMail = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <rect x="2" y="4" width="20" height="16" rx="2"/>
-    <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
-  </svg>
-);
-const IconPhone = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 13.5a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 2.69h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 10.09a16 16 0 0 0 6 6l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 17z"/>
-  </svg>
-);
-const IconCalendar = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <rect x="3" y="4" width="18" height="18" rx="2"/>
-    <line x1="16" y1="2" x2="16" y2="6"/>
-    <line x1="8"  y1="2" x2="8"  y2="6"/>
-    <line x1="3"  y1="10" x2="21" y2="10"/>
-  </svg>
-);
-const IconLock = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <rect x="3" y="11" width="18" height="11" rx="2"/>
-    <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-  </svg>
-);
-const IconEye = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-    <circle cx="12" cy="12" r="3"/>
-  </svg>
-);
-const IconEyeOff = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
-    <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
-    <line x1="1" y1="1" x2="23" y2="23"/>
-  </svg>
-);
-const IconAlert = () => (
-  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="alert__icon">
-    <circle cx="12" cy="12" r="10"/>
-    <line x1="12" y1="8"  x2="12"    y2="12"/>
-    <line x1="12" y1="16" x2="12.01" y2="16"/>
-  </svg>
-);
-const IconBuilding = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <rect x="3" y="3" width="18" height="18" rx="2"/>
-    <path d="M3 9h18M9 21V9"/>
-  </svg>
-);
-const IconBadge = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <rect x="2" y="7" width="20" height="14" rx="2"/>
-    <path d="M16 7V5a2 2 0 0 0-4 0v2"/>
-    <line x1="12" y1="12" x2="12" y2="16"/>
-    <line x1="10" y1="14" x2="14" y2="14"/>
-  </svg>
-);
-const IconCard = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <rect x="2" y="5" width="20" height="14" rx="2"/>
-    <line x1="2" y1="10" x2="22" y2="10"/>
-  </svg>
-);
-const IconRole = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-    <circle cx="9" cy="7" r="4"/>
-    <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
-    <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-  </svg>
-);
-const IconGrid = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <rect x="3" y="3" width="7" height="7"/>
-    <rect x="14" y="3" width="7" height="7"/>
-    <rect x="14" y="14" width="7" height="7"/>
-    <rect x="3" y="14" width="7" height="7"/>
-  </svg>
-);
+const IconUser      = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>;
+const IconMail      = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>;
+const IconPhone     = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 13.5a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 2.69h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 10.09a16 16 0 0 0 6 6l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 17z"/></svg>;
+const IconCalendar  = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>;
+const IconLock      = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>;
+const IconEye       = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>;
+const IconEyeOff    = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>;
+const IconAlert     = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>;
+const IconBuilding  = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>;
+const IconBadge     = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/></svg>;
+const IconCard      = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>;
+const IconRole      = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>;
+const IconGrid      = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>;
+const IconCheck     = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20,6 9,17 4,12"/></svg>;
+const IconArrow     = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12,19 5,12 12,5"/></svg>;
+const IconSpinner   = () => <span style={{ width: 14, height: 14, border: '2px solid rgba(255,255,255,.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin .65s linear infinite', display: 'inline-block' }} />;
 
 // ─────────────────────────────────────────────────────────────
-// EN-TÊTE DE RUBRIQUE
+// COMPOSANT EN-TÊTE DE RUBRIQUE
 // ─────────────────────────────────────────────────────────────
 interface SectionHeaderProps {
   icon:        React.ReactNode;
@@ -126,13 +75,13 @@ function SectionHeader({ icon, number, title, description }: SectionHeaderProps)
       display: 'flex', alignItems: 'flex-start', gap: 12,
       padding: '12px 16px',
       background: 'rgba(13,43,85,.05)',
-      borderRadius: 'var(--radius-md)',
-      borderLeft: '3px solid var(--clr-navy)',
+      borderRadius: 10,
+      borderLeft: '3px solid #0D2B55',
       marginBottom: 14,
     }}>
       <div style={{
         width: 30, height: 30, borderRadius: '50%',
-        background: 'var(--clr-navy)', color: '#fff',
+        background: '#0D2B55', color: '#fff',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         fontSize: '.8rem', fontWeight: 700, flexShrink: 0,
       }}>
@@ -140,14 +89,12 @@ function SectionHeader({ icon, number, title, description }: SectionHeaderProps)
       </div>
       <div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-          <span style={{ color: 'var(--clr-navy)', display: 'flex' }}>{icon}</span>
-          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '.92rem', fontWeight: 700, color: 'var(--clr-navy)', lineHeight: 1 }}>
+          <span style={{ color: '#0D2B55', display: 'flex' }}>{icon}</span>
+          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '.92rem', fontWeight: 700, color: '#0D2B55', lineHeight: 1 }}>
             {title}
           </h3>
         </div>
-        <p style={{ fontSize: '.74rem', color: 'var(--clr-gray-400)', lineHeight: 1.4 }}>
-          {description}
-        </p>
+        <p style={{ fontSize: '.74rem', color: '#8E9BAA', lineHeight: 1.4 }}>{description}</p>
       </div>
     </div>
   );
@@ -157,7 +104,7 @@ function SectionDivider() {
   return (
     <div style={{
       height: 1,
-      background: 'linear-gradient(90deg, transparent, var(--clr-gray-100) 20%, var(--clr-gray-100) 80%, transparent)',
+      background: 'linear-gradient(90deg, transparent, #E8ECF0 20%, #E8ECF0 80%, transparent)',
       margin: '6px 0 18px',
     }} />
   );
@@ -174,83 +121,353 @@ function passwordStrength(pwd: string): 0 | 1 | 2 | 3 {
   if (/[0-9]/.test(pwd) && /[^A-Za-z0-9]/.test(pwd)) score++;
   return score as 0 | 1 | 2 | 3;
 }
-const STRENGTH_LABELS = ['', 'Faible', 'Moyen', 'Fort']    as const;
-const STRENGTH_MODS   = ['', 'weak',   'medium', 'strong'] as const;
-const STRENGTH_COLORS = ['', 'var(--clr-red)', 'var(--clr-yellow-dark)', 'var(--clr-green)'] as const;
+const STRENGTH_LABELS = ['', 'Faible', 'Moyen', 'Fort']     as const;
+const STRENGTH_MODS   = ['', 'weak',   'medium', 'strong']  as const;
+const STRENGTH_COLORS = ['', '#CE1126', '#D97706', '#007A3D'] as const;
 
 // ─────────────────────────────────────────────────────────────
-// VALIDATION LOCALE
+// ÉTAT INITIAL DU FORMULAIRE
 // ─────────────────────────────────────────────────────────────
-function validate(v: RegisterPayload, programmeIds: string[]): FormErrors {
-  const e: FormErrors = {};
+interface FormValues {
+  // Rubrique 1 — Informations personnelles
+  firstName:   string;
+  lastName:    string;
+  email:       string;
+  phoneNumber: string;
 
-  // 1. Personnelles
-  if (!v.firstName.trim())           e.firstName   = 'Le prénom est requis.';
-  else if (v.firstName.length > 50)  e.firstName   = 'Le prénom ne peut pas dépasser 50 caractères.';
-  if (!v.lastName.trim())            e.lastName    = 'Le nom de famille est requis.';
-  else if (v.lastName.length > 50)   e.lastName    = 'Le nom ne peut pas dépasser 50 caractères.';
-  if (!v.email.trim())               e.email       = "L'adresse email est requise.";
-  else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.email))
-                                     e.email       = "L'adresse email est invalide (ex : prenom.nom@minfi.cm).";
-  if (!v.phoneNumber.trim())         e.phoneNumber = 'Le numéro de téléphone est requis.';
-  else if (!/^\+?[0-9\s\-]{8,15}$/.test(v.phoneNumber))
-                                     e.phoneNumber = 'Format invalide. Exemple : +237 6XX XXX XXX';
-  if (!v.dateOfBirth)                e.dateOfBirth = 'La date de naissance est requise.';
+  // Rubrique 2 — Informations professionnelles
+  exerciceId:  string;
+  matricule:   string;
+  nui:          string;
+  roleSysteme: string;   // Rôle back-end (ex: "ADMIN")
+  sectionId:   string;   // ID de la section sélectionnée
+  programmeIds: string[]; // ID(s) des programmes sélectionnés
+  actionIds:   string[];  // IDs des actions sélectionnées (optionnel)
 
-  // 2. Professionnelles
-  if (!v.matricule.trim())           e.matricule   = 'Le matricule est requis.';
-  if (!v.roleId)                     e.roleId      = 'Veuillez sélectionner un rôle.';
-  if (!v.sectionId)                  e.sectionId   = 'Veuillez sélectionner une section administrative.';
-  if (programmeIds.length === 0)     e.programmeIds = 'Veuillez sélectionner au moins un programme.';
+  // Rubrique 3 — CNI
+  numeroCni:       string;
+  cniIssueDate:    string;
+  cniExpiryDate:   string;
 
-  // 3. CNI
-  if (!v.cniNumber.trim())           e.cniNumber       = 'Le numéro de CNI est requis.';
-  if (!v.cniDeliveryDate)            e.cniDeliveryDate = 'La date de délivrance est requise.';
-  if (!v.cniValidityDate)            e.cniValidityDate = 'La date de validité est requise.';
-  if (!v.cniExpiryDate)              e.cniExpiryDate   = "La date d'expiration est requise.";
-  else if (v.cniDeliveryDate && v.cniExpiryDate <= v.cniDeliveryDate)
-                                     e.cniExpiryDate   = "La date d'expiration doit être après la date de délivrance.";
-
-  // 4. Sécurité
-  if (!v.password)                   e.password = 'Le mot de passe est requis.';
-  else if (v.password.length < 8)    e.password = 'Au moins 8 caractères requis.';
-  else if (v.password.length > 72)   e.password = '72 caractères maximum.';
-  else if (!/(?=.*[A-Z])/.test(v.password))        e.password = 'Au moins une lettre majuscule requise (A-Z).';
-  else if (!/(?=.*[a-z])/.test(v.password))        e.password = 'Au moins une lettre minuscule requise (a-z).';
-  else if (!/(?=.*\d)/.test(v.password))           e.password = 'Au moins un chiffre requis (0-9).';
-  else if (!/(?=.*[^A-Za-z\d])/.test(v.password)) e.password = 'Au moins un caractère spécial requis (!, @, #…).';
-  if (!v.confirmPassword)            e.confirmPassword = 'Veuillez confirmer votre mot de passe.';
-  else if (v.password !== v.confirmPassword)
-                                     e.confirmPassword = 'La confirmation ne correspond pas au mot de passe.';
-  return e;
+  // Rubrique 4 — Mot de passe par défaut
+  password:        string;
+  confirmPassword: string;
 }
 
-// État initial
-const EMPTY: RegisterPayload = {
-  firstName: '', lastName: '', email: '', phoneNumber: '', dateOfBirth: '',
-  matricule: '', NIU: '', roleId: '', sectionId: '', programmeIds: [],
-  cniNumber: '', cniDeliveryDate: '', cniValidityDate: '', cniExpiryDate: '',
+const EMPTY_FORM: FormValues = {
+  firstName: '', lastName: '', email: '', phoneNumber: '',
+  exerciceId: '',
+  matricule: '',
+  nui: '',
+  roleSysteme: '',
+  sectionId: '',
+  programmeIds: [],
+  actionIds: [],
+  numeroCni: '',
+  cniIssueDate: '',
+  cniExpiryDate: '',
   password: '', confirmPassword: '',
-  mfaEnabled: true,
 };
 
 // ─────────────────────────────────────────────────────────────
-// COMPOSANT PAGE
+// VALIDATION
+// ─────────────────────────────────────────────────────────────
+function validate(v: FormValues): FormErrors {
+  const e: FormErrors = {};
+
+  // 1. Personnelles
+  if (!v.firstName.trim())          e.firstName   = 'Le prénom est requis.';
+  if (!v.lastName.trim())           e.lastName    = 'Le nom est requis.';
+  if (!v.email.trim())              e.email       = "L'email est requis.";
+  else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.email))
+                                    e.email       = "L'email est invalide.";
+  if (!v.phoneNumber.trim())        e.phoneNumber = 'Le téléphone est requis.';
+  else if (!/^\+?[0-9\s\-]{8,15}$/.test(v.phoneNumber))
+                                    e.phoneNumber = 'Format invalide. Ex : +237 6XX XXX XXX';
+
+  // 2. Professionnelles
+  if (!v.exerciceId)                e.exerciceId  = "Veuillez sélectionner un exercice.";
+  if (!v.matricule.trim())          e.matricule   = 'Le matricule est requis.';
+  if (!v.roleSysteme)              e.roleSysteme = 'Veuillez sélectionner un rôle.';
+  if (!v.sectionId)                 e.sectionId   = 'Veuillez sélectionner une section.';
+  if (!v.programmeIds || v.programmeIds.length === 0)
+                                    e.programmeIds = 'Veuillez sélectionner au moins un programme.';
+
+  // 3. CNI
+  if (!v.numeroCni.trim())          e.numeroCni       = 'Le numéro de CNI est requis.';
+  if (!v.cniIssueDate)             e.cniIssueDate    = 'La date d\'émission est requise.';
+  if (!v.cniExpiryDate)             e.cniExpiryDate   = "La date d'expiration est requise.";
+
+  // 4. Mot de passe
+  if (!v.password)                  e.password = 'Le mot de passe est requis.';
+  else if (v.password.length < 8)   e.password = 'Au moins 8 caractères.';
+  else if (!/(?=.*[A-Z])/.test(v.password)) e.password = 'Au moins une majuscule.';
+  else if (!/(?=.*[a-z])/.test(v.password)) e.password = 'Au moins une minuscule.';
+  else if (!/(?=.*\d)/.test(v.password))    e.password = 'Au moins un chiffre.';
+  else if (!/(?=.*[^A-Za-z\d])/.test(v.password)) e.password = 'Au moins un caractère spécial.';
+  if (!v.confirmPassword)           e.confirmPassword = 'Veuillez confirmer le mot de passe.';
+  else if (v.password !== v.confirmPassword)
+                                    e.confirmPassword = 'Les mots de passe ne correspondent pas.';
+  return e;
+}
+
+// ─────────────────────────────────────────────────────────────
+// COMPOSANT PRINCIPAL
 // ─────────────────────────────────────────────────────────────
 export default function RegisterPage() {
   const router = useRouter();
 
-  const [values,        setValues]        = useState<RegisterPayload>(EMPTY);
-  const [programmeIds,  setProgrammeIds]  = useState<string[]>([]);
-  const [fieldErrors,   setFieldErrors]   = useState<FormErrors>({});
-  const [apiError,      setApiError]      = useState('');
-  const [isLoading,     setIsLoading]     = useState(false);
-  const [showPwd,       setShowPwd]       = useState(false);
-  const [showConfirm,   setShowConfirm]   = useState(false);
+  // ── Formulaire ──
+  const [values,      setValues]      = useState<FormValues>(EMPTY_FORM);
+  const [fieldErrors, setFieldErrors] = useState<FormErrors>({});
+  const [apiError,    setApiError]    = useState('');
+  const [isLoading,   setIsLoading]   = useState(false);
+  const [showPwd,     setShowPwd]     = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+
+  // ── État de succès (après création réussie) ──
+  const [isSuccess,   setIsSuccess]   = useState(false);
+  const [createdName, setCreatedName] = useState('');
+
+  // ─────────────────────────────────────────────────────────────
+  // DONNÉES DE RÉFÉRENCE — chargées depuis l'API
+  // ─────────────────────────────────────────────────────────────
+
+  // Exercices (détermine les sections disponibles)
+  const [exercices, setExercices] = useState<SelectOption[]>([]);
+  const [loadExercices, setLoadExercices] = useState(false);
+
+  // Sections administratives
+  const [sections,     setSections]     = useState<SelectOption[]>([]);
+  const [loadSections, setLoadSections] = useState(false);
+
+  // Rôles disponibles
+  const [roles,     setRoles]     = useState<SelectOption[]>([]);
+  const [loadRoles, setLoadRoles] = useState(false);
+
+  // Programmes (dépendent de la section sélectionnée)
+  const [programmes,     setProgrammes]     = useState<SelectOption[]>([]);
+  const [loadProgrammes, setLoadProgrammes] = useState(false);
+
+  // Actions (dépendent du programme sélectionné)
+  const [actions,     setActions]     = useState<SelectOption[]>([]);
+  const [loadActions, setLoadActions] = useState(false);
 
   const strength = passwordStrength(values.password);
 
-  // Mise à jour des champs texte
+  // ─────────────────────────────────────────────────────────────
+  // VÉRIFICATION AUTH — seul l'admin peut accéder à cette page
+  // ─────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const token = getAccessToken();
+    if (!token) {
+      // Pas de token → rediriger vers login
+      router.replace(APP_ROUTES.LOGIN);
+    }
+  }, [router]);
+
+  // Vérifier le rôle admin (à partir du contexte utilisateur back-end)
+  useEffect(() => {
+    const ctx = getUserContext();
+    if (!ctx) {
+      clearTokens();
+      router.replace(APP_ROUTES.LOGIN);
+      return;
+    }
+
+    const activeAffectation = ctx.affectations?.find(a => a.actif) ?? ctx.affectations?.[0];
+    const roleSysteme = activeAffectation?.roleSysteme;
+    if (roleSysteme && roleSysteme !== 'ADMIN') {
+      router.replace(APP_ROUTES.DASHBOARD);
+    }
+  }, [router]);
+
+  // ─────────────────────────────────────────────────────────────
+  // CHARGEMENT INITIAL — exercices + rôles au montage du composant
+  // ─────────────────────────────────────────────────────────────
+
+  /**
+   * Charge les exercices et les rôles en parallèle dès l'ouverture du formulaire.
+   * Les sections dépendent ensuite du choix de l'exercice.
+   */
+  useEffect(() => {
+    const token = getAccessToken();
+    if (!token) return;
+
+    const headers = {
+      'Authorization': `Bearer ${token}`,
+      'Accept': 'application/json',
+    };
+
+    // Chargement des exercices
+    setLoadExercices(true);
+    fetch(REFERENTIEL_ENDPOINTS.EXERCICES, { headers })
+      .then(r => r.json())
+      .then((data: any[]) => {
+        setExercices(
+          (data ?? [])
+            .filter(x => x && x.id != null)
+            .map(x => {
+              const id = String(x.id);
+              const annee = x.annee != null ? String(x.annee) : '';
+              const libelle = String(x.libelleFr ?? x.libelleEn ?? '').trim();
+              const label = [annee, libelle].filter(Boolean).join(' - ') || id;
+              return {
+                id,
+                label,
+                code: x.codeExercice != null ? String(x.codeExercice) : undefined,
+              };
+            }),
+        );
+      })
+      .catch(() => setExercices([]))
+      .finally(() => setLoadExercices(false));
+
+    // Chargement des rôles
+    setLoadRoles(true);
+    fetch(ADMIN_ENDPOINTS.USERS_ROLES, { headers })
+      .then(r => r.json())
+      .then((data: any[]) => {
+        setRoles(
+          (data ?? [])
+            .map((r: any) => {
+              // Supporte aussi une réponse simple du style ["ADMIN", "COMPTABLE", ...]
+              if (typeof r === 'string') return { id: r, label: r };
+
+              const id = String(r.roleSysteme ?? r.code ?? r.id ?? '');
+              const label = String(r.libelle ?? r.label ?? r.roleSysteme ?? r.name ?? id);
+              return { id, label };
+            })
+            .filter((x: any) => x && x.id),
+        );
+      })
+      .catch(() => setRoles([]))
+      .finally(() => setLoadRoles(false));
+  }, []);
+
+  // ─────────────────────────────────────────────────────────────
+  // CHARGEMENT CASCADE — programmes selon la section sélectionnée
+  // ─────────────────────────────────────────────────────────────
+
+  /**
+   * Quand l'admin sélectionne une section, on charge les programmes
+   * qui lui sont rattachés via GET /api/v1/referentiel/sections/{id}/programmes.
+   *
+   * On réinitialise également les sélections dépendantes (programme + actions).
+   */
+  const fetchProgrammes = useCallback(async (sectionId: string) => {
+    if (!sectionId) {
+      setProgrammes([]);
+      return;
+    }
+
+    const token = getAccessToken();
+    if (!token) return;
+
+    setLoadProgrammes(true);
+    // Réinitialiser le programme et les actions sélectionnés
+    setValues(prev => ({ ...prev, programmeIds: [], actionIds: [] }));
+    setActions([]); // Vider aussi les actions
+
+    try {
+      const response = await fetch(
+        REFERENTIEL_ENDPOINTS.PROGRAMMES_BY_SECTION(sectionId),
+        { headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' } }
+      );
+      const data: { id: string; libelle: string; code?: string }[] = await response.json();
+      setProgrammes(data.map(p => ({ id: p.id, label: p.libelle, code: p.code })));
+    } catch {
+      setProgrammes([]);
+    } finally {
+      setLoadProgrammes(false);
+    }
+  }, []);
+
+  // ─────────────────────────────────────────────────────────────
+  // CHARGEMENT CASCADE — actions selon le programme sélectionné
+  // ─────────────────────────────────────────────────────────────
+
+  /**
+   * Quand l'admin sélectionne un programme, on charge les actions
+   * disponibles via GET /api/v1/referentiel/programmes/{id}/actions.
+   *
+   * Les actions sont indépendantes par programme (une action appartient
+   * à un et un seul programme).
+   */
+  const fetchActions = useCallback(async (programmeIds: string[]) => {
+    if (!programmeIds || programmeIds.length === 0) {
+      setActions([]);
+      return;
+    }
+
+    const token = getAccessToken();
+    if (!token) return;
+
+    setLoadActions(true);
+    // Réinitialiser les actions sélectionnées quand les programmes changent
+    setValues(prev => ({ ...prev, actionIds: [] }));
+
+    try {
+      const tokenHeader = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+
+      const results = await Promise.all(
+        programmeIds.map(async (programmeId) => {
+          const response = await fetch(
+            REFERENTIEL_ENDPOINTS.ACTIONS_BY_PROGRAMME(programmeId),
+            { headers: tokenHeader },
+          );
+          const data: { id: string; libelle: string; code?: string }[] = await response.json();
+          return data.map(a => ({ id: a.id, label: a.libelle, code: a.code }));
+        }),
+      );
+
+      // Fusion + déduplication par `id`
+      const map = new Map<string, SelectOption>();
+      results.flat().forEach(opt => {
+        map.set(opt.id, opt);
+      });
+
+      setActions(Array.from(map.values()));
+    } catch {
+      setActions([]);
+    } finally {
+      setLoadActions(false);
+    }
+  }, []);
+
+  // ─────────────────────────────────────────────────────────────
+  // CHARGEMENT CASCADE — sections selon l'exercice sélectionné
+  // ─────────────────────────────────────────────────────────────
+
+  const fetchSectionsByExercice = useCallback(async (exerciceId: string) => {
+    if (!exerciceId) {
+      setSections([]);
+      return;
+    }
+
+    const token = getAccessToken();
+    if (!token) return;
+
+    setLoadSections(true);
+    try {
+      const response = await fetch(
+        REFERENTIEL_ENDPOINTS.SECTIONS_BY_EXERCICE(exerciceId),
+        { headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' } },
+      );
+      const data: { id: string; libelle: string; code?: string }[] = await response.json();
+      setSections(data.map(s => ({ id: s.id, label: s.libelle, code: s.code })));
+    } catch {
+      setSections([]);
+    } finally {
+      setLoadSections(false);
+    }
+  }, []);
+
+  // ─────────────────────────────────────────────────────────────
+  // GESTION DES CHANGEMENTS DE CHAMPS
+  // ─────────────────────────────────────────────────────────────
+
+  /** Met à jour un champ texte et efface son erreur */
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setValues(prev => ({ ...prev, [name]: value }));
@@ -258,25 +475,63 @@ export default function RegisterPage() {
     setApiError('');
   };
 
-  // Mise à jour d'un champ select simple (role, section)
-  const handleSelect = (field: 'roleId' | 'sectionId') => (id: string) => {
-    setValues(prev => ({ ...prev, [field]: id }));
-    if (fieldErrors[field]) setFieldErrors(prev => ({ ...prev, [field]: undefined }));
+  /**
+   * Gère la sélection de l'exercice.
+   * Déclenche le chargement en cascade des sections.
+   */
+  const handleExerciceChange = (exerciceId: string) => {
+    setValues(prev => ({ ...prev, exerciceId, sectionId: '', programmeIds: [], actionIds: [] }));
+    if (fieldErrors.exerciceId) setFieldErrors(prev => ({ ...prev, exerciceId: undefined }));
+
+    // Réinitialiser les sélections dépendantes visibles
+    setProgrammes([]);
+    setActions([]);
+    fetchSectionsByExercice(exerciceId);
   };
 
-  // Mise à jour programmes (multi)
-  const handleProgrammes = (ids: string[]) => {
-    setProgrammeIds(ids);
-    if (fieldErrors.programmeIds) setFieldErrors(prev => ({ ...prev, programmeIds: undefined }));
+  /**
+   * Gère la sélection d'une section.
+   * Déclenche le chargement en cascade des programmes.
+   */
+  const handleSectionChange = (sectionId: string) => {
+    setValues(prev => ({ ...prev, sectionId, programmeIds: [], actionIds: [] }));
+    if (fieldErrors.sectionId) setFieldErrors(prev => ({ ...prev, sectionId: undefined }));
+    fetchProgrammes(sectionId); // ← Charger les programmes de cette section
   };
+
+  /**
+   * Gère la sélection multi-programmes.
+   * Déclenche le chargement en cascade des actions.
+   */
+  const handleProgrammeIdsChange = (programmeIds: string[]) => {
+    setValues(prev => ({ ...prev, programmeIds, actionIds: [] }));
+    if (fieldErrors.programmeIds) setFieldErrors(prev => ({ ...prev, programmeIds: undefined }));
+    fetchActions(programmeIds); // ← Charger les actions liées aux programmes sélectionnés
+  };
+
+  /** Gère la sélection du rôle */
+  const handleRoleSystemeChange = (roleSysteme: string) => {
+    setValues(prev => ({ ...prev, roleSysteme }));
+    if (fieldErrors.roleSysteme) setFieldErrors(prev => ({ ...prev, roleSysteme: undefined }));
+  };
+
+  /** Gère la sélection multiple des actions */
+  const handleActionsChange = (actionIds: string[]) => {
+    setValues(prev => ({ ...prev, actionIds }));
+  };
+
+  // ─────────────────────────────────────────────────────────────
+  // SOUMISSION DU FORMULAIRE
+  // ─────────────────────────────────────────────────────────────
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const payload = { ...values, programmeIds };
-    const errors  = validate(payload, programmeIds);
+    // Validation locale avant l'appel API
+    const errors = validate(values);
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
+      // Scroller vers le premier champ en erreur
       const firstKey = Object.keys(errors)[0];
       document.getElementById(firstKey)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
@@ -287,30 +542,47 @@ export default function RegisterPage() {
     setFieldErrors({});
 
     try {
-      const data = await registerUser(payload);
-      const qrImage = data.secretImageUri;
-      if (qrImage) {
-        sessionStorage.setItem('gbe_qr_code',   qrImage);
-        sessionStorage.setItem('gbe_email_2fa', values.email);
-        router.push(APP_ROUTES.REGISTER_QR);
-      } else {
-        setApiError("Inscription réussie mais aucun QR code reçu. Contactez l'administrateur.");
-      }
+      // Construire le payload à envoyer au back-end
+      // Le format correspond exactement à ce qu'attend POST /api/v1/admin/users
+      const payload: AdminCreateUserPayload = {
+        firstName: values.firstName.trim(),
+        lastName: values.lastName.trim(),
+        matricule: values.matricule.trim(),
+        email: values.email.trim().toLowerCase(),
+        phoneNumber: values.phoneNumber.trim(),
+
+        numeroCni: values.numeroCni.trim(),
+        nui: values.nui.trim(),
+        cniIssueDate: values.cniIssueDate,
+        cniExpiryDate: values.cniExpiryDate,
+
+        roleSysteme: values.roleSysteme,
+        sectionId: values.sectionId,
+        programmeIds: values.programmeIds,
+
+        password: values.password,
+        ...(values.actionIds.length > 0 ? { actionIds: values.actionIds } : {}),
+      };
+
+      // Appel POST /api/v1/admin/users avec le JWT de l'admin
+      await createUser(payload);
+
+      // ✅ SUCCÈS — afficher l'écran de confirmation
+      setCreatedName(`${values.firstName} ${values.lastName}`);
+      setIsSuccess(true);
+
     } catch (err) {
       if (err instanceof ApiError) {
+        if (err.httpStatus === 401) {
+          // Token expiré → déconnecter et rediriger vers login
+          clearTokens();
+          router.replace(APP_ROUTES.LOGIN);
+          return;
+        }
         if (Object.keys(err.fieldErrors).length > 0) {
           setFieldErrors(err.fieldErrors);
-          if (err.code === 'METHODE_ARGUMENT_NOT_VALID')
-            setApiError('Veuillez corriger les erreurs indiquées dans le formulaire.');
         } else {
           setApiError(err.message);
-          if (err.code === 'EMAIL_ALREADY_EXISTS') {
-            setFieldErrors({ email: err.message });
-            document.getElementById('email')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          } else if (err.code === 'PHONE_NUMBER_ALREADY_EXISTS') {
-            setFieldErrors({ phoneNumber: err.message });
-            document.getElementById('phoneNumber')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          }
         }
       } else {
         setApiError('Une erreur inattendue est survenue. Veuillez réessayer.');
@@ -321,327 +593,566 @@ export default function RegisterPage() {
   };
 
   // ─────────────────────────────────────────────────────────────
-  // RENDU
+  // ÉCRAN DE SUCCÈS — affiché après création réussie
+  // ─────────────────────────────────────────────────────────────
+  if (isSuccess) {
+    return (
+      <div style={{
+        minHeight: '100vh', background: '#F5F6FA',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontFamily: 'var(--font-body)', padding: '24px',
+      }}>
+        <div style={{
+          background: '#fff', borderRadius: 20, padding: '48px 40px',
+          maxWidth: 520, width: '100%', textAlign: 'center',
+          boxShadow: '0 20px 60px rgba(0,0,0,.10)',
+          animation: 'cardReveal .4s cubic-bezier(.22,.68,0,1.2)',
+        }}>
+          {/* Icône de succès */}
+          <div style={{
+            width: 80, height: 80, borderRadius: '50%',
+            background: 'linear-gradient(135deg, #005A2D, #009A4E)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            margin: '0 auto 24px',
+            boxShadow: '0 8px 24px rgba(0,122,61,.3)',
+          }}>
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5">
+              <polyline points="20,6 9,17 4,12"/>
+            </svg>
+          </div>
+
+          {/* Message de succès */}
+          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.6rem', fontWeight: 700, color: '#0D2B55', marginBottom: 12 }}>
+            Compte créé avec succès !
+          </h2>
+          <p style={{ fontSize: '.925rem', color: '#4A5568', lineHeight: 1.7, marginBottom: 8 }}>
+            Le compte de <strong style={{ color: '#0D2B55' }}>{createdName}</strong> a été créé avec succès.
+          </p>
+          <p style={{ fontSize: '.875rem', color: '#8E9BAA', lineHeight: 1.6, marginBottom: 32 }}>
+            Ses identifiants de connexion (email + mot de passe temporaire) lui ont été envoyés par email.
+            Il devra configurer son authentification à deux facteurs lors de sa première connexion.
+          </p>
+
+          {/* Actions après succès */}
+          <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
+            {/* Créer un autre utilisateur */}
+            <button
+              onClick={() => { setIsSuccess(false); setValues(EMPTY_FORM); setFieldErrors({}); }}
+              style={{
+                padding: '12px 24px', border: '1.5px solid #0D2B55',
+                borderRadius: 10, background: 'transparent', cursor: 'pointer',
+                fontFamily: 'var(--font-body)', fontSize: '.9rem', fontWeight: 600,
+                color: '#0D2B55',
+              }}
+            >
+              + Créer un autre utilisateur
+            </button>
+
+            {/* Retour au tableau de bord admin */}
+            <button
+              onClick={() => router.push(APP_ROUTES.ADMIN_DASHBOARD)}
+              style={{
+                padding: '12px 24px', border: 'none', borderRadius: 10,
+                background: 'linear-gradient(135deg, #0D2B55, #1A3A6B)',
+                cursor: 'pointer', fontFamily: 'var(--font-body)',
+                fontSize: '.9rem', fontWeight: 600, color: '#fff',
+                boxShadow: '0 4px 14px rgba(13,43,85,.25)',
+                display: 'flex', alignItems: 'center', gap: 8,
+              }}
+            >
+              Retour au tableau de bord
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // RENDU PRINCIPAL — formulaire de création
   // ─────────────────────────────────────────────────────────────
   return (
-    <AuthLayout
-      title="Créer un compte"
-      subtitle="Remplissez les cinq rubriques pour accéder à la plateforme GBE"
-      wide
-    >
-      {apiError && (
-        <div className="alert alert--error" role="alert">
-          <IconAlert /> {apiError}
+    <div style={{ minHeight: '100vh', background: '#F5F6FA', fontFamily: 'var(--font-body)' }}>
+
+      {/* TOPBAR */}
+      <header style={{
+        background: 'linear-gradient(135deg, #0D2B55, #1A3A6B)',
+        padding: '0 32px', height: 64,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        boxShadow: '0 2px 16px rgba(13,43,85,.30)',
+        position: 'sticky', top: 0, zIndex: 100,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          {/* Bouton retour */}
+          <button
+            onClick={() => router.push(APP_ROUTES.ADMIN_DASHBOARD)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              background: 'rgba(255,255,255,.1)', border: '1px solid rgba(255,255,255,.2)',
+              color: '#fff', fontSize: '.82rem', fontWeight: 500,
+              padding: '7px 14px', borderRadius: 8, cursor: 'pointer',
+              fontFamily: 'var(--font-body)',
+            }}
+          >
+            <IconArrow /> Tableau de bord
+          </button>
+          <div style={{ width: 1, height: 20, background: 'rgba(255,255,255,.2)' }} />
+          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 700, color: '#fff' }}>
+            Créer un utilisateur
+          </h1>
         </div>
-      )}
 
-      <form onSubmit={handleSubmit} noValidate>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-
-          {/* ══════════════════════════════════════════
-              RUBRIQUE 1 — INFORMATIONS PERSONNELLES
-              ══════════════════════════════════════════ */}
-          <SectionHeader number={1} icon={<IconUser />}
-            title="Informations personnelles"
-            description="Votre état civil tel qu'il apparaît sur vos documents officiels"
-          />
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div className="form-grid-2">
-              <Input id="firstName" name="firstName" type="text"
-                label="Prénom *" placeholder="Ali"
-                value={values.firstName} onChange={handleChange}
-                error={fieldErrors.firstName} icon={<IconUser />}
-                autoComplete="given-name" disabled={isLoading} autoFocus />
-              <Input id="lastName" name="lastName" type="text"
-                label="Nom de famille *" placeholder="Bello"
-                value={values.lastName} onChange={handleChange}
-                error={fieldErrors.lastName} icon={<IconUser />}
-                autoComplete="family-name" disabled={isLoading} />
-            </div>
-            <Input id="email" name="email" type="email"
-              label="Adresse email professionnelle *" placeholder="prenom.nom@minfi.cm"
-              value={values.email} onChange={handleChange}
-              error={fieldErrors.email} icon={<IconMail />}
-              autoComplete="email" disabled={isLoading} />
-            <div className="form-grid-2">
-              <Input id="phoneNumber" name="phoneNumber" type="tel"
-                label="Téléphone *" placeholder="+237 6XX XXX XXX"
-                value={values.phoneNumber} onChange={handleChange}
-                error={fieldErrors.phoneNumber} icon={<IconPhone />}
-                autoComplete="tel" disabled={isLoading} />
-              <Input id="dateOfBirth" name="dateOfBirth" type="date"
-                label="Date de naissance *"
-                value={values.dateOfBirth} onChange={handleChange}
-                error={fieldErrors.dateOfBirth} icon={<IconCalendar />}
-                autoComplete="bday" disabled={isLoading} />
-            </div>
+        {/* Badge admin */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          background: 'rgba(255,255,255,.1)', borderRadius: 999,
+          padding: '4px 14px 4px 4px',
+        }}>
+          <div style={{
+            width: 30, height: 30, borderRadius: '50%',
+            background: 'linear-gradient(135deg, #CE1126, #8B0914)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: '#fff', fontSize: '.7rem', fontWeight: 700,
+          }}>
+            AD
           </div>
-
-          <SectionDivider />
-
-          {/* ══════════════════════════════════════════
-              RUBRIQUE 2 — INFORMATIONS PROFESSIONNELLES
-              ══════════════════════════════════════════ */}
-          <SectionHeader number={2} icon={<IconBuilding />}
-            title="Informations professionnelles"
-            description="Vos identifiants et affectations au sein de la Fonction Publique camerounaise"
-          />
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-
-            {/* Matricule */}
-            <Input id="matricule" name="matricule" type="text"
-              label="Matricule (Fonction Publique) *" placeholder="ex : FP-23-456789"
-              value={values.matricule} onChange={handleChange}
-              error={fieldErrors.matricule} icon={<IconBadge />}
-              disabled={isLoading} />
-
-
-             {/* NUI */}
-            <Input id="NIU" name="NIU" type="text"
-              label="NIU  *" placeholder="ex : P123456789"
-              value={values.NIU} onChange={handleChange}
-              error={fieldErrors.NIU} icon={<IconBadge />}
-              disabled={isLoading} />
-
-
-
-            {/* Rôle */}
-            <div id="roleId">
-              <SearchableSelect
-                id="roleId"
-                label="Rôle dans l'application *"
-                placeholder="Sélectionnez ou recherchez un rôle…"
-                options={MOCK_ROLES}
-                multiple={false}
-                value={values.roleId}
-                onChange={handleSelect('roleId')}
-                error={fieldErrors.roleId}
-                disabled={isLoading}
-                icon={<IconRole />}
-              />
-            </div>
-
-            {/* Section administrative */}
-            <div id="sectionId">
-              <SearchableSelect
-                id="sectionId"
-                label="Section administrative (Ministère / Direction) *"
-                placeholder="Sélectionnez ou recherchez une section…"
-                options={MOCK_SECTIONS.map(s => ({ id: s.id, label: s.label, code: s.code }))}
-                multiple={false}
-                value={values.sectionId}
-                onChange={handleSelect('sectionId')}
-                error={fieldErrors.sectionId}
-                disabled={isLoading}
-                icon={<IconBuilding />}
-              />
-            </div>
-
-            {/* Programmes — sélection multiple */}
-            <div id="programmeIds">
-              <SearchableSelect
-                id="programmeIds"
-                label="Programme(s) budgétaire(s) *"
-                placeholder="Sélectionnez un ou plusieurs programmes…"
-                options={MOCK_PROGRAMMES.map(p => ({ id: p.id, label: p.label, code: p.code }))}
-                multiple={true}
-                value={programmeIds}
-                onChange={handleProgrammes}
-                error={fieldErrors.programmeIds}
-                disabled={isLoading}
-                icon={<IconGrid />}
-              />
-              <p style={{ fontSize: '.73rem', color: 'var(--clr-gray-400)', marginTop: 4 }}>
-                Vous pouvez sélectionner plusieurs programmes.
-              </p>
-            </div>
-
-            {/* Note @future */}
-            <div style={{
-              display: 'flex', alignItems: 'flex-start', gap: 8,
-              padding: '9px 12px',
-              background: 'rgba(13,43,85,.04)',
-              border: '1px dashed rgba(13,43,85,.20)',
-              borderRadius: 'var(--radius-sm)',
-              fontSize: '.73rem', color: 'var(--clr-navy)', lineHeight: 1.5,
-            }}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0, marginTop: 1 }}>
-                <circle cx="12" cy="12" r="10"/>
-                <line x1="12" y1="16" x2="12" y2="12"/>
-                <line x1="12" y1="8"  x2="12.01" y2="8"/>
-              </svg>
-              Ces informations seront vérifiées auprès des registres de la Fonction Publique
-              lors de l&apos;activation de votre compte par un administrateur.
-            </div>
+          <div>
+            <p style={{ fontSize: '.78rem', fontWeight: 600, color: '#fff', lineHeight: 1 }}>Administrateur</p>
+            <p style={{ fontSize: '.63rem', color: 'rgba(255,255,255,.5)' }}>Super Admin</p>
           </div>
+        </div>
+      </header>
 
-          <SectionDivider />
+      {/* Bandes tricolores */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', height: 4 }}>
+        <div style={{ background: '#007A3D' }} /><div style={{ background: '#CE1126' }} /><div style={{ background: '#FCD116' }} />
+      </div>
 
-          {/* ══════════════════════════════════════════
-              RUBRIQUE 3 — CARTE NATIONALE D'IDENTITÉ
-              ══════════════════════════════════════════ */}
-          <SectionHeader number={3} icon={<IconCard />}
-            title="Carte Nationale d'Identité (CNI)"
-            description="Informations figurant sur votre CNI camerounaise en cours de validité"
-          />
+      {/* CONTENU PRINCIPAL */}
+      <main style={{ maxWidth: 760, margin: '0 auto', padding: '32px 24px 60px' }}>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <Input id="cniNumber" name="cniNumber" type="text"
-              label="Numéro de la CNI *" placeholder="ex : 1234567A"
-              value={values.cniNumber} onChange={handleChange}
-              error={fieldErrors.cniNumber} icon={<IconCard />}
-              disabled={isLoading} />
+        {/* Fil d'Ariane */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 20, fontSize: '.78rem', color: '#8E9BAA' }}>
+          <span
+            onClick={() => router.push(APP_ROUTES.ADMIN_DASHBOARD)}
+            style={{ cursor: 'pointer', color: '#8E9BAA' }}
+          >
+            Tableau de bord
+          </span>
+          <span>›</span>
+          <span
+            onClick={() => router.push(APP_ROUTES.ADMIN_DASHBOARD)}
+            style={{ cursor: 'pointer', color: '#8E9BAA' }}
+          >
+            Utilisateurs
+          </span>
+          <span>›</span>
+          <span style={{ color: '#0D2B55', fontWeight: 600 }}>Créer un utilisateur</span>
+        </div>
 
-            {/* 3 dates sur une ligne */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
-              <div style={{ minWidth: 0 }}>
-                <Input id="cniDeliveryDate" name="cniDeliveryDate" type="date"
-                  label="Date de délivrance *"
-                  value={values.cniDeliveryDate} onChange={handleChange}
-                  error={fieldErrors.cniDeliveryDate} icon={<IconCalendar />}
-                  disabled={isLoading} />
+        {/* Titre */}
+        <div style={{ marginBottom: 28 }}>
+          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.5rem', fontWeight: 700, color: '#0D2B55', marginBottom: 6 }}>
+            Nouvel utilisateur
+          </h2>
+          <p style={{ fontSize: '.875rem', color: '#8E9BAA' }}>
+            Remplissez les informations ci-dessous. Un email avec les identifiants sera envoyé à l'utilisateur.
+          </p>
+        </div>
+
+        {/* Message d'erreur global */}
+        {apiError && (
+          <div style={{
+            display: 'flex', alignItems: 'flex-start', gap: 10,
+            padding: '14px 18px', background: '#FEF2F2',
+            border: '1px solid #FECACA', borderRadius: 10,
+            color: '#991B1B', fontSize: '.875rem', marginBottom: 24,
+          }}>
+            <IconAlert />
+            <span>{apiError}</span>
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} noValidate>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+            {/* ══════════════════════════════════════════
+                RUBRIQUE 1 — INFORMATIONS PERSONNELLES
+                ══════════════════════════════════════════ */}
+            <div style={{ background: '#fff', borderRadius: 14, border: '1px solid #E8ECF0', overflow: 'visible', boxShadow: '0 2px 12px rgba(0,0,0,.05)' }}>
+              <div style={{ padding: '20px 24px 0' }}>
+                <SectionHeader number={1} icon={<IconUser />}
+                  title="Informations personnelles"
+                  description="État civil de l'agent tel qu'il apparaît sur ses documents officiels"
+                />
               </div>
-              
-              <div style={{ minWidth: 0 }}>
-                <Input id="cniExpiryDate" name="cniExpiryDate" type="date"
-                  label="Date d'expiration *"
-                  value={values.cniExpiryDate} onChange={handleChange}
-                  error={fieldErrors.cniExpiryDate} icon={<IconCalendar />}
-                  disabled={isLoading} />
+              <div style={{ padding: '0 24px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                  <Input id="firstName" name="firstName" label="Prénom *" placeholder="Ex : Jean-Baptiste"
+                    value={values.firstName} onChange={handleChange} error={fieldErrors.firstName}
+                    icon={<IconUser />} disabled={isLoading} autoFocus />
+                  <Input id="lastName" name="lastName" label="Nom de famille *" placeholder="Ex : Nguema"
+                    value={values.lastName} onChange={handleChange} error={fieldErrors.lastName}
+                    icon={<IconUser />} disabled={isLoading} />
+                </div>
+                <Input id="email" name="email" type="email" label="Adresse email professionnelle *"
+                  placeholder="prenom.nom@minfi.cm"
+                  value={values.email} onChange={handleChange} error={fieldErrors.email}
+                  icon={<IconMail />} disabled={isLoading} />
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 14 }}>
+                  <Input id="phoneNumber" name="phoneNumber" type="tel" label="Téléphone *"
+                    placeholder="+237 6XX XXX XXX"
+                    value={values.phoneNumber} onChange={handleChange} error={fieldErrors.phoneNumber}
+                    icon={<IconPhone />} disabled={isLoading} />
+                </div>
               </div>
             </div>
 
-            <div style={{
-              display: 'flex', alignItems: 'flex-start', gap: 8,
-              padding: '9px 12px',
-              background: 'rgba(13,43,85,.04)',
-              border: '1px dashed rgba(13,43,85,.20)',
-              borderRadius: 'var(--radius-sm)',
-              fontSize: '.73rem', color: 'var(--clr-navy)', lineHeight: 1.5,
-            }}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0, marginTop: 1 }}>
-                <circle cx="12" cy="12" r="10"/>
-                <line x1="12" y1="16" x2="12" y2="12"/>
-                <line x1="12" y1="8"  x2="12.01" y2="8"/>
-              </svg>
-              Assurez-vous que votre CNI est <strong style={{ marginLeft: 3 }}>en cours de validité</strong>.
-              Une CNI expirée entraînera le rejet de votre demande d&apos;accès.
+            <SectionDivider />
+
+            {/* ══════════════════════════════════════════
+                RUBRIQUE 2 — INFORMATIONS PROFESSIONNELLES
+                Cascade : Section → Programmes → Actions
+                ══════════════════════════════════════════ */}
+            <div style={{ background: '#fff', borderRadius: 14, border: '1px solid #E8ECF0', overflow: 'visible', boxShadow: '0 2px 12px rgba(0,0,0,.05)' }}>
+              <div style={{ padding: '20px 24px 0' }}>
+                <SectionHeader number={2} icon={<IconBuilding />}
+                  title="Informations professionnelles"
+                  description="Identifiants, affectation et rôle au sein de la Fonction Publique"
+                />
+              </div>
+              <div style={{ padding: '0 24px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+                {/* Matricule + NIU */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                  <Input id="matricule" name="matricule" label="Matricule (Fonction Publique) *"
+                    placeholder="Ex : FP-23-456789"
+                    value={values.matricule} onChange={handleChange} error={fieldErrors.matricule}
+                    icon={<IconBadge />} disabled={isLoading} />
+                  <Input id="nui" name="nui" label="NUI (Identifiant Fiscal)"
+                    placeholder="Ex : P123456789"
+                    value={values.nui} onChange={handleChange} error={fieldErrors.nui}
+                    icon={<IconBadge />} disabled={isLoading} />
+                </div>
+
+                {/* Rôle */}
+                <div id="roleSysteme">
+                  {loadRoles ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px', color: '#8E9BAA', fontSize: '.82rem' }}>
+                      <IconSpinner /> Chargement des rôles…
+                    </div>
+                  ) : (
+                    <SearchableSelect
+                      id="roleSysteme"
+                      label="Rôle dans l'application *"
+                      placeholder="Sélectionnez un rôle…"
+                      options={roles}
+                      multiple={false}
+                      value={values.roleSysteme}
+                      onChange={handleRoleSystemeChange}
+                      error={fieldErrors.roleSysteme}
+                      disabled={isLoading}
+                      icon={<IconRole />}
+                    />
+                  )}
+                </div>
+
+                {/* ── EXERCICE → détermine les sections ── */}
+                <div id="exerciceId">
+                  {loadExercices ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px', color: '#8E9BAA', fontSize: '.82rem' }}>
+                      <IconSpinner /> Chargement des exercices…
+                    </div>
+                  ) : (
+                    <SearchableSelect
+                      id="exerciceId"
+                      label="Exercice *"
+                      placeholder="Sélectionnez un exercice…"
+                      options={exercices}
+                      multiple={false}
+                      value={values.exerciceId}
+                      onChange={handleExerciceChange}
+                      error={fieldErrors.exerciceId}
+                      disabled={isLoading}
+                      icon={<IconCalendar />}
+                    />
+                  )}
+                </div>
+
+                {/* ── SECTION → cascade vers Programmes ── */}
+                <div id="sectionId">
+                  {loadSections ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px', color: '#8E9BAA', fontSize: '.82rem' }}>
+                      <IconSpinner /> Chargement des sections…
+                    </div>
+                  ) : (
+                    <SearchableSelect
+                      id="sectionId"
+                      label="Section administrative (Ministère / Direction) *"
+                      placeholder="Sélectionnez une section…"
+                      options={sections}
+                      multiple={false}
+                      value={values.sectionId}
+                      onChange={handleSectionChange}  // ← Déclenche fetchProgrammes
+                      error={fieldErrors.sectionId}
+                      disabled={isLoading || !values.exerciceId}
+                      icon={<IconBuilding />}
+                    />
+                  )}
+                </div>
+
+                {/* ── PROGRAMMES → cascade vers Actions (visible si section sélectionnée) ── */}
+                {values.sectionId && (
+                  <div id="programmeIds" style={{ animation: 'fadeSlideDown .2s ease' }}>
+                    {loadProgrammes ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px', color: '#8E9BAA', fontSize: '.82rem' }}>
+                        <IconSpinner /> Chargement des programmes de la section…
+                      </div>
+                    ) : programmes.length === 0 ? (
+                      <div style={{
+                        padding: '12px 14px', background: '#FFFBEB',
+                        border: '1px solid #FCD116', borderRadius: 8,
+                        fontSize: '.8rem', color: '#92400E',
+                      }}>
+                        ⚠️ Aucun programme disponible pour cette section.
+                      </div>
+                    ) : (
+                      <SearchableSelect
+                        id="programmeIds"
+                        label="Programmes budgétaires *"
+                        placeholder="Sélectionnez un ou plusieurs programmes…"
+                        options={programmes}
+                        multiple={true}
+                        value={values.programmeIds}
+                        onChange={handleProgrammeIdsChange} // ← Déclenche fetchActions
+                        error={fieldErrors.programmeIds}
+                        disabled={isLoading}
+                        icon={<IconGrid />}
+                      />
+                    )}
+                  </div>
+                )}
+
+                {/* ── ACTIONS (visibles si programme sélectionné) ── */}
+                {values.programmeIds.length > 0 && (
+                  <div style={{ animation: 'fadeSlideDown .2s ease' }}>
+                    {loadActions ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px', color: '#8E9BAA', fontSize: '.82rem' }}>
+                        <IconSpinner /> Chargement des actions des programmes…
+                      </div>
+                    ) : actions.length === 0 ? (
+                      <div style={{
+                        padding: '12px 14px', background: '#F5F6FA',
+                        border: '1px solid #E8ECF0', borderRadius: 8,
+                        fontSize: '.8rem', color: '#8E9BAA',
+                      }}>
+                        Aucune action définie pour ces programmes — vous pouvez continuer.
+                      </div>
+                    ) : (
+                      <SearchableSelect
+                        id="actionIds"
+                        label="Actions autorisées (optionnel)"
+                        placeholder="Sélectionnez une ou plusieurs actions…"
+                        options={actions}
+                        multiple={true}
+                        value={values.actionIds}
+                        onChange={handleActionsChange}
+                        disabled={isLoading}
+                        icon={<IconCheck />}
+                      />
+                    )}
+                    <p style={{ fontSize: '.73rem', color: '#8E9BAA', marginTop: 4 }}>
+                      Les actions dépendent des programmes sélectionnés. Vous pouvez en sélectionner plusieurs.
+                    </p>
+                  </div>
+                )}
+
+              </div>
             </div>
-          </div>
 
-          <SectionDivider />
+            <SectionDivider />
 
-          {/* ══════════════════════════════════════════
-              RUBRIQUE 4 — SÉCURITÉ DU COMPTE
-              ══════════════════════════════════════════ */}
-          <SectionHeader number={4} icon={<IconLock />}
-            title="Sécurité du compte"
-            description="Choisissez un mot de passe fort pour protéger votre accès"
-          />
+            {/* ══════════════════════════════════════════
+                RUBRIQUE 3 — CARTE NATIONALE D'IDENTITÉ
+                ══════════════════════════════════════════ */}
+            <div style={{ background: '#fff', borderRadius: 14, border: '1px solid #E8ECF0', overflow: 'visible', boxShadow: '0 2px 12px rgba(0,0,0,.05)' }}>
+              <div style={{ padding: '20px 24px 0' }}>
+                <SectionHeader number={3} icon={<IconCard />}
+                  title="Carte Nationale d'Identité (CNI)"
+                  description="Informations figurant sur la CNI camerounaise en cours de validité"
+                />
+              </div>
+              <div style={{ padding: '0 24px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <Input id="numeroCni" name="numeroCni" label="Numéro de la CNI *"
+                  placeholder="Ex : 1234567A"
+                  value={values.numeroCni} onChange={handleChange} error={fieldErrors.numeroCni}
+                  icon={<IconCard />} disabled={isLoading} />
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                  <Input id="cniIssueDate" name="cniIssueDate" type="date"
+                    label="Date d'émission *"
+                    value={values.cniIssueDate} onChange={handleChange}
+                    error={fieldErrors.cniIssueDate} icon={<IconCalendar />} disabled={isLoading} />
+                  <Input id="cniExpiryDate" name="cniExpiryDate" type="date"
+                    label="Date d'expiration *"
+                    value={values.cniExpiryDate} onChange={handleChange}
+                    error={fieldErrors.cniExpiryDate} icon={<IconCalendar />} disabled={isLoading} />
+                </div>
+              </div>
+            </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {/* Mot de passe */}
-            <div>
-              <Input id="password" name="password"
-                type={showPwd ? 'text' : 'password'}
-                label="Mot de passe *" placeholder="••••••••"
-                value={values.password} onChange={handleChange}
-                error={fieldErrors.password} icon={<IconLock />}
-                autoComplete="new-password" disabled={isLoading}
-                rightElement={
-                  <button type="button" className="pwd-toggle"
-                    onClick={() => setShowPwd(v => !v)}
-                    aria-label={showPwd ? 'Masquer' : 'Afficher'}>
-                    {showPwd ? <IconEyeOff /> : <IconEye />}
-                  </button>
-                }
-              />
-              {values.password && (
-                <div style={{ marginTop: 6 }}>
-                  <div className="pwd-strength">
-                    {[1, 2, 3].map(i => (
-                      <div key={i} className={`pwd-strength__bar ${strength >= i ? `pwd-strength__bar--${STRENGTH_MODS[strength]}` : ''}`} />
+            <SectionDivider />
+
+            {/* ══════════════════════════════════════════
+                RUBRIQUE 4 — MOT DE PASSE PAR DÉFAUT
+                L'admin définit un mot de passe temporaire.
+                L'utilisateur le recevra par email et devra
+                le modifier à la première connexion.
+                ══════════════════════════════════════════ */}
+            <div style={{ background: '#fff', borderRadius: 14, border: '1px solid #E8ECF0', overflow: 'hidden', boxShadow: '0 2px 12px rgba(0,0,0,.05)' }}>
+              <div style={{ padding: '20px 24px 0' }}>
+                <SectionHeader number={4} icon={<IconLock />}
+                  title="Mot de passe temporaire"
+                  description="L'administrateur définit un mot de passe que l'utilisateur recevra par email"
+                />
+              </div>
+              <div style={{ padding: '0 24px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+                {/* Note d'information */}
+                <div style={{
+                  display: 'flex', alignItems: 'flex-start', gap: 10,
+                  padding: '12px 14px', background: '#EFF6FF',
+                  border: '1px solid #BFDBFE', borderRadius: 8,
+                  fontSize: '.82rem', color: '#1E40AF',
+                }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0, marginTop: 1 }}>
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="12" y1="16" x2="12" y2="12"/>
+                    <line x1="12" y1="8" x2="12.01" y2="8"/>
+                  </svg>
+                  <span>
+                    Ce mot de passe sera envoyé à l'utilisateur par email avec ses identifiants.
+                    Il sera invité à le modifier dès sa première connexion.
+                  </span>
+                </div>
+
+                {/* Champ mot de passe */}
+                <div>
+                  <Input id="password" name="password"
+                    type={showPwd ? 'text' : 'password'}
+                    label="Mot de passe temporaire *"
+                    placeholder="Définissez un mot de passe fort"
+                    value={values.password} onChange={handleChange}
+                    error={fieldErrors.password} icon={<IconLock />}
+                    disabled={isLoading}
+                    rightElement={
+                      <button type="button" className="pwd-toggle"
+                        onClick={() => setShowPwd(v => !v)}
+                        aria-label={showPwd ? 'Masquer' : 'Afficher'}>
+                        {showPwd ? <IconEyeOff /> : <IconEye />}
+                      </button>
+                    }
+                  />
+                  {/* Indicateur de force du mot de passe */}
+                  {values.password && (
+                    <div style={{ marginTop: 6 }}>
+                      <div className="pwd-strength">
+                        {[1, 2, 3].map(i => (
+                          <div key={i} className={`pwd-strength__bar ${strength >= i ? `pwd-strength__bar--${STRENGTH_MODS[strength]}` : ''}`} />
+                        ))}
+                      </div>
+                      <p className="pwd-strength__label">
+                        Force : <strong style={{ color: STRENGTH_COLORS[strength] }}>{STRENGTH_LABELS[strength]}</strong>
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Confirmation du mot de passe */}
+                <Input id="confirmPassword" name="confirmPassword"
+                  type={showConfirm ? 'text' : 'password'}
+                  label="Confirmer le mot de passe *"
+                  placeholder="Répétez le mot de passe"
+                  value={values.confirmPassword} onChange={handleChange}
+                  error={fieldErrors.confirmPassword} icon={<IconLock />}
+                  disabled={isLoading}
+                  rightElement={
+                    <button type="button" className="pwd-toggle"
+                      onClick={() => setShowConfirm(v => !v)}
+                      aria-label={showConfirm ? 'Masquer' : 'Afficher'}>
+                      {showConfirm ? <IconEyeOff /> : <IconEye />}
+                    </button>
+                  }
+                />
+
+                {/* Règles du mot de passe */}
+                <div style={{ padding: '10px 14px', background: 'rgba(13,43,85,.03)', borderRadius: 8, border: '1px solid rgba(13,43,85,.08)' }}>
+                  <p style={{ fontSize: '.73rem', fontWeight: 600, color: '#0D2B55', marginBottom: 6 }}>
+                    Le mot de passe doit contenir :
+                  </p>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '3px 16px' }}>
+                    {[
+                      { ok: values.password.length >= 8,          label: 'Au moins 8 caractères' },
+                      { ok: /[A-Z]/.test(values.password),        label: 'Une majuscule (A-Z)' },
+                      { ok: /[a-z]/.test(values.password),        label: 'Une minuscule (a-z)' },
+                      { ok: /[0-9]/.test(values.password),        label: 'Un chiffre (0-9)' },
+                      { ok: /[^A-Za-z0-9]/.test(values.password), label: 'Un caractère spécial' },
+                    ].map(rule => (
+                      <div key={rule.label} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                          stroke={rule.ok ? '#007A3D' : '#D1D8E0'} strokeWidth="2.5">
+                          {rule.ok ? <polyline points="20,6 9,17 4,12"/> : <circle cx="12" cy="12" r="10"/>}
+                        </svg>
+                        <span style={{ fontSize: '.71rem', color: rule.ok ? '#007A3D' : '#8E9BAA', fontWeight: rule.ok ? 500 : 400 }}>
+                          {rule.label}
+                        </span>
+                      </div>
                     ))}
                   </div>
-                  <p className="pwd-strength__label">
-                    Force : <strong style={{ color: STRENGTH_COLORS[strength] }}>{STRENGTH_LABELS[strength]}</strong>
-                  </p>
                 </div>
-              )}
-            </div>
-
-            {/* Confirmation */}
-            <Input id="confirmPassword" name="confirmPassword"
-              type={showConfirm ? 'text' : 'password'}
-              label="Confirmer le mot de passe *" placeholder="••••••••"
-              value={values.confirmPassword} onChange={handleChange}
-              error={fieldErrors.confirmPassword} icon={<IconLock />}
-              autoComplete="new-password" disabled={isLoading}
-              rightElement={
-                <button type="button" className="pwd-toggle"
-                  onClick={() => setShowConfirm(v => !v)}
-                  aria-label={showConfirm ? 'Masquer' : 'Afficher'}>
-                  {showConfirm ? <IconEyeOff /> : <IconEye />}
-                </button>
-              }
-            />
-
-            {/* Checklist règles */}
-            <div style={{
-              padding: '10px 14px',
-              background: 'rgba(13,43,85,.03)',
-              borderRadius: 'var(--radius-sm)',
-              border: '1px solid rgba(13,43,85,.08)',
-            }}>
-              <p style={{ fontSize: '.73rem', fontWeight: 600, color: 'var(--clr-navy)', marginBottom: 6 }}>
-                Le mot de passe doit contenir :
-              </p>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '3px 16px' }}>
-                {[
-                  { ok: values.password.length >= 8,            label: 'Au moins 8 caractères' },
-                  { ok: /[A-Z]/.test(values.password),          label: 'Une majuscule (A-Z)' },
-                  { ok: /[a-z]/.test(values.password),          label: 'Une minuscule (a-z)' },
-                  { ok: /[0-9]/.test(values.password),          label: 'Un chiffre (0-9)' },
-                  { ok: /[^A-Za-z0-9]/.test(values.password),   label: 'Un caractère spécial (!@#…)' },
-                ].map(rule => (
-                  <div key={rule.label} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
-                      stroke={rule.ok ? 'var(--clr-green)' : 'var(--clr-gray-200)'}
-                      strokeWidth="2.5">
-                      {rule.ok ? <polyline points="20,6 9,17 4,12"/> : <circle cx="12" cy="12" r="10"/>}
-                    </svg>
-                    <span style={{ fontSize: '.71rem', color: rule.ok ? 'var(--clr-green-dark)' : 'var(--clr-gray-400)', fontWeight: rule.ok ? 500 : 400 }}>
-                      {rule.label}
-                    </span>
-                  </div>
-                ))}
               </div>
             </div>
 
-            {/* Info 2FA */}
-            <div className="alert alert--info" style={{ fontSize: '.79rem' }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="alert__icon">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-              </svg>
-              Un <strong>QR code</strong> vous sera fourni à l&apos;étape suivante pour configurer
-              l&apos;authentification à deux facteurs (obligatoire).
+            {/* ── Boutons de soumission ── */}
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', paddingTop: 8 }}>
+              {/* Annuler */}
+              <button
+                type="button"
+                onClick={() => router.push(APP_ROUTES.ADMIN_DASHBOARD)}
+                disabled={isLoading}
+                style={{
+                  padding: '12px 24px', border: '1.5px solid #E8ECF0', borderRadius: 10,
+                  background: '#fff', cursor: 'pointer', fontFamily: 'var(--font-body)',
+                  fontSize: '.9rem', fontWeight: 500, color: '#4A5568',
+                }}
+              >
+                Annuler
+              </button>
+
+              {/* Créer */}
+              <button
+                type="submit"
+                disabled={isLoading}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '12px 28px', border: 'none', borderRadius: 10,
+                  background: isLoading ? '#8E9BAA' : 'linear-gradient(135deg, #007A3D, #005A2D)',
+                  cursor: isLoading ? 'not-allowed' : 'pointer',
+                  fontFamily: 'var(--font-body)', fontSize: '.9rem', fontWeight: 600, color: '#fff',
+                  boxShadow: isLoading ? 'none' : '0 4px 14px rgba(0,122,61,.3)',
+                  transition: 'all .15s',
+                }}
+              >
+                {isLoading ? (
+                  <><IconSpinner /> Création en cours…</>
+                ) : (
+                  <><IconCheck /> Créer l'utilisateur</>
+                )}
+              </button>
             </div>
+
           </div>
-
-          {/* Bouton soumettre */}
-          <Button type="submit" variant="secondary" isLoading={isLoading} fullWidth>
-            {isLoading ? 'Création du compte…' : 'Créer mon compte'}
-          </Button>
-
-        </div>
-      </form>
-
-      <p className="auth-switch">
-        Déjà inscrit ?{' '}
-        <Link href={APP_ROUTES.LOGIN}>Se connecter</Link>
-      </p>
-    </AuthLayout>
+        </form>
+      </main>
+    </div>
   );
 }

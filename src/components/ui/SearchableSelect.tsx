@@ -78,11 +78,12 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
 
   // Filtrage des options selon la recherche
   const filtered = options.filter(opt => {
+    if (!opt || !opt.id) return false;
     const q = search.toLowerCase();
-    return (
-      opt.label.toLowerCase().includes(q) ||
-      (opt.code?.toLowerCase().includes(q) ?? false)
-    );
+    const label = (opt.label ?? '').toLowerCase();
+    const code  = (opt.code  ?? '').toLowerCase();
+    if (!q) return true;
+    return label.includes(q) || code.includes(q);
   });
 
   // ── Helpers selon mode ──
