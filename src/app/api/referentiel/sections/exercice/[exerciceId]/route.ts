@@ -1,4 +1,14 @@
-import { NextResponse, type NextRequest } from 'next/server';
+// ============================================================
+// FICHIER  : src/app/api/referentiel/sections/exercice/[exerciceId]/route.ts
+//
+// RÔLE     : Proxy Next.js pour
+//            GET /api/v1/referentiel/sections/exercice/{exerciceId}
+//
+// POURQUOI : Cette route n'existait pas → les sections ne se
+//            chargeaient jamais après sélection d'un exercice.
+// ============================================================
+
+import { NextResponse } from 'next/server';
 import { API_BASE_URL } from '@/constants/auth';
 
 function pickAuth(req: Request): string | null {
@@ -7,25 +17,28 @@ function pickAuth(req: Request): string | null {
 }
 
 export async function GET(
-  req: NextRequest,
-  { params }: { params: Promise<{ exerciceId: string }> },
+  req: Request,
+  { params }: { params: Promise<{ exerciceId: string }> }
 ) {
-  const auth = pickAuth(req);
   const { exerciceId } = await params;
+  const auth = pickAuth(req);
 
-  const target = `${API_BASE_URL}/api/v1/referentiel/sections/exercice/${exerciceId}`;
-
-  const upstream = await fetch(target, {
-    method: 'GET',
-    headers: {
-      ...(auth ? { Authorization: auth } : {}),
-      Accept: 'application/json',
-    },
-    cache: 'no-store',
-  });
+  const upstream = await fetch(
+    `${API_BASE_URL}/api/v1/referentiel/sections/exercice/${exerciceId}`,
+    {
+      method: 'GET',
+      headers: {
+        ...(auth ? { Authorization: auth } : {}),
+        Accept: 'application/json',
+      },
+      cache: 'no-store',
+    }
+  );
 
   const contentType = upstream.headers.get('content-type') ?? '';
-  const body = contentType.includes('application/json') ? await upstream.json() : await upstream.text();
+  const body = contentType.includes('application/json')
+    ? await upstream.json()
+    : await upstream.text();
+
   return NextResponse.json(body, { status: upstream.status });
 }
-
