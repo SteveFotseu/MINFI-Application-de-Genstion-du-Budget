@@ -9,6 +9,13 @@
 //   - Liste des utilisateurs avec statuts et affectations
 //   - Actions : créer, modifier, activer/désactiver, supprimer
 //   - Redirection vers /admin/users/edit/[userId] pour modification
+//
+// CORRECTIFS :
+//   - Sécurisation de l'accès à `user.affectations` (peut être
+//     `undefined` côté API quand l'utilisateur n'a pas encore
+//     d'affectation, car le backend utilise @JsonInclude(NON_NULL)).
+//   - Normalisation des utilisateurs à la réception (loadUsers).
+//   - Protection des accès aux initiales (firstName / lastName).
 // ============================================================
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -77,6 +84,16 @@ function RoleBadge({ role }: { role: string }) {
   );
 }
 
+// ── Helper : normalisation utilisateur ───────────────────────
+// Garantit que `affectations` est toujours un tableau, même si le
+// backend l'omet (cas @JsonInclude(NON_NULL) côté Java).
+function normalizeUser(u: UserSummary): UserSummary {
+  return {
+    ...u,
+    affectations: Array.isArray(u.affectations) ? u.affectations : [],
+  };
+}
+
 // ─────────────────────────────────────────────────────────────
 // COMPOSANT PRINCIPAL
 // ─────────────────────────────────────────────────────────────
@@ -120,7 +137,8 @@ export default function AdminDashboardPage() {
       });
       if (!res.ok) throw new Error(`Erreur ${res.status}`);
       const data: UserSummary[] = await res.json();
-      setUsers(data);
+      // Normalisation : on garantit que chaque user a un tableau `affectations`.
+      setUsers(data.map(normalizeUser));
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Impossible de charger les utilisateurs.', 'error');
     } finally {
@@ -194,11 +212,12 @@ export default function AdminDashboardPage() {
   const filtered = users.filter(u => {
     if (!search) return true;
     const q = search.toLowerCase();
+    const affectations = u.affectations ?? [];
     return (
-      u.firstName.toLowerCase().includes(q) ||
-      u.lastName.toLowerCase().includes(q) ||
-      u.email.toLowerCase().includes(q) ||
-      u.affectations.some(a => a.roleSysteme.toLowerCase().includes(q))
+      (u.firstName ?? '').toLowerCase().includes(q) ||
+      (u.lastName  ?? '').toLowerCase().includes(q) ||
+      (u.email     ?? '').toLowerCase().includes(q) ||
+      affectations.some(a => a.roleSysteme.toLowerCase().includes(q))
     );
   });
 
@@ -367,8 +386,15 @@ export default function AdminDashboardPage() {
                   </thead>
                   <tbody>
                     {filtered.map((user, idx) => {
-                      const isPending     = pendingIds.has(user.id);
-                      const mainAff       = user.affectations[0];
+                      const isPending    = pendingIds.has(user.id);
+                      // ✅ FIX : on garantit un tableau, même si le backend
+                      // omet le champ `affectations` (cas @JsonInclude NON_NULL).
+                      const affectations = user.affectations ?? [];
+                      const mainAff      = affectations[0];
+                      // ✅ FIX : on sécurise les initiales (firstName/lastName
+                      // peuvent théoriquement être vides à la création).
+                      const initials     = `${(user.firstName ?? '?')[0]}${(user.lastName ?? '')[0] ?? ''}`;
+
                       return (
                         <tr key={user.id} style={{ borderBottom: idx < filtered.length - 1 ? '1px solid #F0F2F5' : 'none', opacity: isPending ? 0.6 : 1, transition: 'background .15s' }}
                           onMouseEnter={e => { if (!isPending) e.currentTarget.style.background = '#F8F9FB'; }}
@@ -378,7 +404,7 @@ export default function AdminDashboardPage() {
                           <td style={{ padding: '14px 16px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                               <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg, #0D2B55, #1A3A6B)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: '.85rem', flexShrink: 0 }}>
-                                {user.firstName[0]}{user.lastName[0]}
+                                {initials}
                               </div>
                               <div>
                                 <p style={{ fontSize: '.875rem', fontWeight: 600, color: '#0D2B55' }}>{user.firstName} {user.lastName}</p>
@@ -402,8 +428,8 @@ export default function AdminDashboardPage() {
                               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                                 <RoleBadge role={mainAff.roleSysteme} />
                                 <span style={{ fontSize: '.72rem', color: '#8E9BAA' }}>{mainAff.sectionLibelle}</span>
-                                {user.affectations.length > 1 && (
-                                  <span style={{ fontSize: '.68rem', color: '#8E9BAA' }}>+{user.affectations.length - 1} autre(s)</span>
+                                {affectations.length > 1 && (
+                                  <span style={{ fontSize: '.68rem', color: '#8E9BAA' }}>+{affectations.length - 1} autre(s)</span>
                                 )}
                               </div>
                             ) : (
