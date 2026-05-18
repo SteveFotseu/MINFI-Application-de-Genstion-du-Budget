@@ -7,17 +7,22 @@
 // FLUX :
 //   1. Charger les agents sans compte  GET /admin/agents/without-account
 //   2. Charger les rôles               GET /admin/users/roles
-//   3. L'admin sélectionne un agent (prénom + nom + matricule)
-//   4. L'admin remplit email, mot de passe, rôle, section, programme
-//   5. POST /admin/users { agentId, email, password, roleSysteme, sectionId, programmeIds[] }
+//   3. Charger les sections            GET /referentiel/sections
+//   4. L'admin choisit : agent → identifiants → rôle → section
+//   5. Cascade : section choisie → fetch des programmes de la section
+//   6. L'admin coche un OU PLUSIEURS programmes (multi-select)
+//   7. POST /admin/users { agentId, email, password, roleSysteme,
+//                          sectionId, programmeIds: string[] }
 //
-// NOTE SUR roleSysteme :
-//   L'API /admin/users/roles retourne { code, libelle, defaultPermissions }.
-//   Le champ "roleSysteme" attendu par POST /admin/users est le CODE (ex: "ORDONNATEUR"),
-//   pas un ID numérique. Le back-end fait "Entity not found" si on envoie un ID inexistant.
+// CHANGEMENT v2 :
+//   - Le sélecteur de programme (single-select) est remplacé par un
+//     panneau multi-sélection avec cases à cocher, barre de recherche,
+//     boutons "Tout cocher / Tout décocher", et résumé des choix.
+//   - Le champ form.programmeId (string) devient form.programmeIds
+//     (string[]) — aligné avec ce qu'attend le backend.
 // ============================================================
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
@@ -48,15 +53,15 @@ const ERROR_MESSAGES: Record<string, string> = {
 };
 
 const ERROR_FIELD_MAP: Record<string, string> = {
-  'VALIDATION.USER.EMAIL.NOT_BLANK':  'email',
-  'VALIDATION.USER.EMAIL.FORMAT':     'email',
-  'EMAIL_ALREADY_EXISTS':             'email',
-  'VALIDATION.USER.PASSWORD.NOT_BLANK': 'password',
-  'VALIDATION.USER.PASSWORD.SIZE':      'password',
-  'VALIDATION.USER.PASSWORD.WEAK':      'password',
-  'VALIDATION.USER.ROLE.NOT_NULL':      'roleSysteme',
-  'VALIDATION.USER.SECTION.NOT_BLANK':  'sectionId',
-  'VALIDATION.USER.PROGRAMMES.NOT_EMPTY':'programmeId',
+  'VALIDATION.USER.EMAIL.NOT_BLANK':       'email',
+  'VALIDATION.USER.EMAIL.FORMAT':          'email',
+  'EMAIL_ALREADY_EXISTS':                  'email',
+  'VALIDATION.USER.PASSWORD.NOT_BLANK':    'password',
+  'VALIDATION.USER.PASSWORD.SIZE':         'password',
+  'VALIDATION.USER.PASSWORD.WEAK':         'password',
+  'VALIDATION.USER.ROLE.NOT_NULL':         'roleSysteme',
+  'VALIDATION.USER.SECTION.NOT_BLANK':     'sectionId',
+  'VALIDATION.USER.PROGRAMMES.NOT_EMPTY':  'programmeIds',
 };
 
 function translateError(code: string): string {
@@ -106,6 +111,8 @@ const IconEyeOff = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="n
 const IconAlertCircle = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>;
 const IconFieldError  = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>;
 const IconUser   = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>;
+const IconSearch = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>;
+const IconX      = () => <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>;
 
 const Spinner = ({ size = 16, color = '#0D2B55' }: { size?: number; color?: string }) => (
   <span style={{ display: 'inline-block', width: size, height: size, border: '2px solid rgba(0,0,0,.1)', borderTopColor: color, borderRadius: '50%', animation: 'spin .65s linear infinite', flexShrink: 0 }} />
@@ -136,9 +143,6 @@ function ErrorBanner({ errors }: { errors: string[] }) {
     <div style={{ display: 'flex', gap: 12, padding: '14px 18px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 12, marginBottom: 20, animation: 'fadeSlideDown .25s ease' }}>
       <span style={{ color: '#CE1126', flexShrink: 0, marginTop: 2 }}><IconAlertCircle /></span>
       <div>
-        <p style={{ fontWeight: 700, color: '#991B1B', fontSize: '.875rem', marginBottom: errors.length > 1 ? 6 : 0 }}>
-          {errors.length > 1 ? `${errors.length} erreurs à corriger` : 'Une erreur s\'est produite'}
-        </p>
         {errors.length > 1
           ? <ul style={{ margin: 0, paddingLeft: 16 }}>{errors.map((e, i) => <li key={i} style={{ fontSize: '.82rem', color: '#991B1B', lineHeight: 1.5 }}>{e}</li>)}</ul>
           : <p style={{ fontSize: '.82rem', color: '#991B1B' }}>{errors[0]}</p>}
@@ -163,6 +167,209 @@ const selectStyle = (hasError?: boolean): React.CSSProperties => ({
 });
 
 // ─────────────────────────────────────────────────────────────
+// NOUVEAU COMPOSANT : Sélecteur multi-programmes
+// ─────────────────────────────────────────────────────────────
+function ProgrammeMultiSelect({
+  programmes, selectedIds, onChange, loading, hasError,
+}: {
+  programmes: Programme[];
+  selectedIds: string[];
+  onChange: (ids: string[]) => void;
+  loading: boolean;
+  hasError?: boolean;
+}) {
+  const [search, setSearch] = useState('');
+
+  // Filtrage par texte de recherche (libellé OU code)
+  const filtered = useMemo(() => {
+    if (!search.trim()) return programmes;
+    const q = search.toLowerCase();
+    return programmes.filter(p =>
+      p.libelleFr.toLowerCase().includes(q) ||
+      p.code.toLowerCase().includes(q)
+    );
+  }, [programmes, search]);
+
+  const toggle = (id: string) => {
+    if (selectedIds.includes(id)) onChange(selectedIds.filter(x => x !== id));
+    else onChange([...selectedIds, id]);
+  };
+
+  const allFilteredSelected = filtered.length > 0 && filtered.every(p => selectedIds.includes(p.id));
+  const someFilteredSelected = filtered.some(p => selectedIds.includes(p.id));
+
+  const toggleAll = () => {
+    if (allFilteredSelected) {
+      // Décocher tous ceux qui sont actuellement filtrés
+      onChange(selectedIds.filter(id => !filtered.some(p => p.id === id)));
+    } else {
+      // Cocher tous les filtrés (en gardant ceux déjà sélectionnés hors filtre)
+      const additions = filtered.filter(p => !selectedIds.includes(p.id)).map(p => p.id);
+      onChange([...selectedIds, ...additions]);
+    }
+  };
+
+  // État chargement
+  if (loading) {
+    return (
+      <div style={{ padding: '20px 16px', border: '1.5px solid #E8ECF0', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, color: '#8E9BAA', fontSize: '.875rem', background: '#FAFBFC' }}>
+        <Spinner size={16} /> Chargement des programmes…
+      </div>
+    );
+  }
+
+  // État vide
+  if (programmes.length === 0) {
+    return (
+      <div style={{ padding: '14px 16px', border: '1.5px solid #FCD116', borderRadius: 10, background: '#FFFBEB', color: '#92400E', fontSize: '.82rem', display: 'flex', alignItems: 'center', gap: 8 }}>
+        ⚠️ Aucun programme disponible pour cette section.
+      </div>
+    );
+  }
+
+  return (
+    <div style={{
+      border: `1.5px solid ${hasError ? '#CE1126' : '#E8ECF0'}`,
+      borderRadius: 12,
+      background: hasError ? '#FFF5F5' : '#fff',
+      overflow: 'hidden',
+      transition: 'border-color .15s',
+    }}>
+      {/* En-tête : recherche + boutons groupés */}
+      <div style={{ padding: '12px 14px', borderBottom: '1px solid #F0F2F5', background: '#F8F9FB', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        {/* Recherche */}
+        <div style={{ flex: 1, minWidth: 180, position: 'relative' }}>
+          <span style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: '#8E9BAA' }}>
+            <IconSearch />
+          </span>
+          <input
+            type="text"
+            placeholder="Rechercher un programme…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{
+              width: '100%', padding: '8px 30px 8px 32px',
+              border: '1.5px solid #E8ECF0', borderRadius: 8,
+              fontFamily: 'var(--font-body)', fontSize: '.8rem',
+              outline: 'none', background: '#fff',
+            }}
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#8E9BAA', padding: 4, display: 'flex' }}
+              title="Effacer la recherche"
+            >
+              <IconX />
+            </button>
+          )}
+        </div>
+
+        {/* Tout cocher / décocher */}
+        <button
+          type="button"
+          onClick={toggleAll}
+          style={{
+            padding: '7px 12px',
+            border: '1.5px solid #E8ECF0',
+            borderRadius: 8,
+            background: '#fff',
+            cursor: 'pointer',
+            fontFamily: 'var(--font-body)',
+            fontSize: '.75rem',
+            fontWeight: 600,
+            color: '#0D2B55',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {allFilteredSelected ? 'Tout décocher' : 'Tout cocher'}
+        </button>
+      </div>
+
+      {/* Liste des programmes */}
+      <div style={{ maxHeight: 280, overflowY: 'auto' }}>
+        {filtered.length === 0 ? (
+          <p style={{ padding: '20px', textAlign: 'center', fontSize: '.82rem', color: '#8E9BAA', fontStyle: 'italic' }}>
+            Aucun programme ne correspond à votre recherche.
+          </p>
+        ) : (
+          filtered.map((p, idx) => {
+            const checked = selectedIds.includes(p.id);
+            return (
+              <label
+                key={p.id}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  padding: '11px 14px',
+                  cursor: 'pointer',
+                  borderBottom: idx < filtered.length - 1 ? '1px solid #F0F2F5' : 'none',
+                  background: checked ? '#EFF6FF' : 'transparent',
+                  transition: 'background .12s',
+                }}
+                onMouseEnter={e => { if (!checked) e.currentTarget.style.background = '#F8F9FB'; }}
+                onMouseLeave={e => { if (!checked) e.currentTarget.style.background = 'transparent'; }}
+              >
+                {/* Case à cocher custom */}
+                <span style={{
+                  width: 18, height: 18, borderRadius: 4,
+                  border: `2px solid ${checked ? '#0D2B55' : '#D1D8E0'}`,
+                  background: checked ? '#0D2B55' : '#fff',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  flexShrink: 0, transition: 'all .12s',
+                }}>
+                  {checked && (
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3">
+                      <polyline points="20,6 9,17 4,12"/>
+                    </svg>
+                  )}
+                </span>
+
+                {/* Vraie checkbox cachée (pour accessibilité) */}
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggle(p.id)}
+                  style={{ position: 'absolute', opacity: 0, pointerEvents: 'none' }}
+                />
+
+                {/* Libellé du programme */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ fontSize: '.85rem', fontWeight: checked ? 600 : 500, color: checked ? '#0D2B55' : '#1A202C' }}>
+                    {p.libelleFr}
+                  </p>
+                  <p style={{ fontSize: '.7rem', color: '#8E9BAA', marginTop: 1 }}>
+                    Code : <code style={{ background: '#F0F2F5', padding: '1px 5px', borderRadius: 3 }}>{p.code}</code>
+                  </p>
+                </div>
+              </label>
+            );
+          })
+        )}
+      </div>
+
+      {/* Pied : résumé */}
+      <div style={{ padding: '10px 14px', borderTop: '1px solid #F0F2F5', background: '#F8F9FB', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ fontSize: '.75rem', color: '#4A5568' }}>
+          <strong style={{ color: selectedIds.length > 0 ? '#0D2B55' : '#8E9BAA' }}>{selectedIds.length}</strong>
+          {' '}programme{selectedIds.length > 1 ? 's' : ''} sélectionné{selectedIds.length > 1 ? 's' : ''}
+          {' '}/{ programmes.length} disponible{programmes.length > 1 ? 's' : ''}
+        </span>
+        {selectedIds.length > 0 && (
+          <button
+            type="button"
+            onClick={() => onChange([])}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '.72rem', color: '#CE1126', fontWeight: 600, padding: 0 }}
+          >
+            Réinitialiser
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // COMPOSANT PRINCIPAL
 // ─────────────────────────────────────────────────────────────
 export default function CreateUserPage() {
@@ -184,9 +391,13 @@ export default function CreateUserPage() {
   const [loadingProg, setLoadingProg] = useState(false);
 
   // ── Formulaire ──
-  const [form, setForm] = useState({
+  // 🔄 CHANGEMENT : programmeId (string) → programmeIds (string[])
+  const [form, setForm] = useState<{
+    agentId: string; email: string; password: string; confirmPassword: string;
+    roleSysteme: string; sectionId: string; programmeIds: string[];
+  }>({
     agentId: '', email: '', password: '', confirmPassword: '',
-    roleSysteme: '', sectionId: '', programmeId: '',
+    roleSysteme: '', sectionId: '', programmeIds: [],
   });
   const [errors,       setErrors]       = useState<Errors>({});
   const [bannerErrors, setBannerErrors] = useState<string[]>([]);
@@ -220,9 +431,10 @@ export default function CreateUserPage() {
   }, [authH]);
 
   // ── Cascade programmes ──
+  // 🔄 CHANGEMENT : on reset form.programmeIds (tableau) au lieu de programmeId (string).
   const handleSectionChange = async (sectionId: string) => {
-    setForm(p => ({ ...p, sectionId, programmeId: '' }));
-    setErrors(p => ({ ...p, sectionId: undefined, programmeId: undefined }));
+    setForm(p => ({ ...p, sectionId, programmeIds: [] }));
+    setErrors(p => ({ ...p, sectionId: undefined, programmeIds: undefined }));
     if (!sectionId) { setProgrammes([]); return; }
     setLoadingProg(true);
     try {
@@ -232,7 +444,14 @@ export default function CreateUserPage() {
     finally { setLoadingProg(false); }
   };
 
-  // ── Agent sélectionné (pour affichage) ──
+  // ── Mise à jour de la sélection multiple de programmes ──
+  const handleProgrammesChange = (ids: string[]) => {
+    setForm(p => ({ ...p, programmeIds: ids }));
+    setErrors(p => ({ ...p, programmeIds: undefined }));
+    setBannerErrors([]);
+  };
+
+  // ── Agent / rôle sélectionnés (pour affichage) ──
   const selectedAgent = agents.find(a => a.id === form.agentId);
   const selectedRole  = roles.find(r => r.code === form.roleSysteme);
 
@@ -250,7 +469,9 @@ export default function CreateUserPage() {
       e.confirmPassword = 'Les mots de passe ne correspondent pas.';
     if (!form.roleSysteme) e.roleSysteme = 'Veuillez sélectionner un rôle.';
     if (!form.sectionId)   e.sectionId   = 'Veuillez sélectionner une section.';
-    if (!form.programmeId) e.programmeId = 'Veuillez sélectionner un programme.';
+    // 🔄 CHANGEMENT : validation du tableau (au moins 1 programme).
+    if (!form.programmeIds || form.programmeIds.length === 0)
+      e.programmeIds = 'Veuillez cocher au moins un programme.';
     setErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -265,14 +486,14 @@ export default function CreateUserPage() {
     }
     setSubmitting(true);
     try {
-      // NOTE : roleSysteme = code du rôle (ex : "ORDONNATEUR"), pas un ID
+      // 🔄 CHANGEMENT : on envoie directement le tableau form.programmeIds.
       const payload = {
         agentId:      form.agentId,
         email:        form.email,
         password:     form.password,
-        roleSysteme:  form.roleSysteme,  // code (ORDONNATEUR, ADMIN, etc.)
+        roleSysteme:  form.roleSysteme,
         sectionId:    form.sectionId,
-        programmeIds: [form.programmeId],
+        programmeIds: form.programmeIds,
       };
       const res  = await fetch(ADMIN_ENDPOINTS.CREATE_USER, {
         method: 'POST', headers: authH(), body: JSON.stringify(payload),
@@ -297,7 +518,7 @@ export default function CreateUserPage() {
     }
   };
 
-  const setField = (key: keyof typeof form) => (val: string) => {
+  const setField = (key: 'agentId' | 'email' | 'password' | 'confirmPassword' | 'roleSysteme') => (val: string) => {
     setForm(p => ({ ...p, [key]: val }));
     setErrors(p => ({ ...p, [key]: undefined }));
     setBannerErrors([]);
@@ -351,7 +572,7 @@ export default function CreateUserPage() {
           <div style={{ width: 1, height: 20, background: '#E8ECF0' }} />
           <div>
             <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 700, color: '#0D2B55', lineHeight: 1 }}>Créer un compte utilisateur</h1>
-            <p style={{ fontSize: '.72rem', color: '#8E9BAA', marginTop: 2 }}>Associer un agent existant à un compte d'accès GBE</p>
+            <p style={{ fontSize: '.72rem', color: '#8E9BAA', marginTop: 2 }}>Associer un agent existant à un compte d&apos;accès GBE</p>
           </div>
         </header>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', height: 4 }}>
@@ -378,7 +599,7 @@ export default function CreateUserPage() {
                     <div style={stepBadge('#0D2B55')}><IconUser /></div>
                     <div>
                       <h2 style={cardTitle}>Agent à lier au compte</h2>
-                      <p style={cardSub}>Sélectionnez l'agent qui possédera ce compte utilisateur</p>
+                      <p style={cardSub}>Sélectionnez l&apos;agent qui possédera ce compte utilisateur</p>
                     </div>
                   </div>
                   <div style={{ padding: '24px' }}>
@@ -466,7 +687,7 @@ export default function CreateUserPage() {
                     </div>
                     <div>
                       <h2 style={cardTitle}>Rôle et affectation budgétaire</h2>
-                      <p style={cardSub}>Droits d'accès et programme budgétaire associé</p>
+                      <p style={cardSub}>Droits d&apos;accès et programmes budgétaires associés</p>
                     </div>
                   </div>
                   <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: 18 }}>
@@ -501,24 +722,21 @@ export default function CreateUserPage() {
                       </select>
                     </Field>
 
-                    {/* Programme */}
+                    {/* 🆕 Programmes (multi-sélection) */}
                     {form.sectionId && (
-                      <Field label="Programme budgétaire" required error={errors.programmeId}>
-                        {loadingProg ? (
-                          <div style={{ height: 44, padding: '0 14px', border: '1.5px solid #E8ECF0', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 8, color: '#8E9BAA', fontSize: '.875rem' }}>
-                            <Spinner size={14} /> Chargement des programmes…
-                          </div>
-                        ) : programmes.length === 0 ? (
-                          <div style={{ height: 44, padding: '0 14px', border: '1.5px solid #FCD116', borderRadius: 10, background: '#FFFBEB', display: 'flex', alignItems: 'center', color: '#92400E', fontSize: '.82rem' }}>
-                            Aucun programme pour cette section
-                          </div>
-                        ) : (
-                          <select style={selectStyle(!!errors.programmeId)} value={form.programmeId}
-                            onChange={e => setField('programmeId')(e.target.value)}>
-                            <option value="">— Sélectionner un programme —</option>
-                            {programmes.map(p => <option key={p.id} value={p.id}>{p.libelleFr} ({p.code})</option>)}
-                          </select>
-                        )}
+                      <Field
+                        label="Programmes budgétaires"
+                        required
+                        error={errors.programmeIds}
+                        hint="Cochez un ou plusieurs programmes auxquels cet utilisateur sera affecté."
+                      >
+                        <ProgrammeMultiSelect
+                          programmes={programmes}
+                          selectedIds={form.programmeIds}
+                          onChange={handleProgrammesChange}
+                          loading={loadingProg}
+                          hasError={!!errors.programmeIds}
+                        />
                       </Field>
                     )}
 
