@@ -1,89 +1,40 @@
 // ============================================================
 // FICHIER  : src/types/auth.ts
-// RÔLE     : Interfaces TypeScript pour l'API back-end GBE.
 // ============================================================
 
-// ── Payloads (ce qu'on ENVOIE) ──────────────────────────────
-
-export interface LoginPayload {
-  email:    string;
-  password: string;
-}
-
+export interface LoginPayload { email: string; password: string; }
 export interface RegisterPayload {
-  firstName:       string;
-  lastName:        string;
-  email:           string;
-  password:        string;
-  confirmPassword: string;
-  phoneNumber:     string;
-  dateOfBirth:     string;   // "1990-01-25"
-  mfaEnabled:      boolean;  // Toujours true
+  firstName: string; lastName: string; email: string;
+  password: string; confirmPassword: string;
+  phoneNumber: string; dateOfBirth: string; mfaEnabled: boolean;
 }
-
-export interface VerifyPayload {
-  email: string;   // Email de l'utilisateur
-  code:  string;   // Code TOTP à 6 chiffres
-}
-
-export interface ForgotPasswordPayload {
-  email: string;
-}
-
-// ── Réponses (ce que le back-end RETOURNE) ──────────────────
-
-/**
- * Réponse après inscription.
- * Le back-end retourne :
- *   {
- *     "mfaEnabled": true,
- *     "secretImageUri": "data:image/png;base64,..."
- *   }
- */
-export interface RegisterResponse {
-  mfaEnabled?:    boolean;
-  secretImageUri?: string;  // ✅ Vrai nom du champ retourné par le back-end
-  // Champs alternatifs au cas où la structure change
-  qrCodeUrl?:     string;
-  qrCode?:        string;
-  message?:       string;
-}
-
-/**
- * Réponse après connexion.
- * Si 2FA activé → mfaRequired=true, pas d'accessToken.
- * Si 2FA désactivé → accessToken direct.
- */
+export interface SetupMfaPayload { email: string; code: string; mfaToken: string; }
+export interface VerifyPayload   { email: string; code: string; mfaToken: string; }
+export interface ForgotPasswordPayload { email: string; }
+export interface RegisterResponse { mfaEnabled?: boolean; secretImageUri?: string; qrCodeUrl?: string; message?: string; }
 export interface LoginResponse {
-  success?:       boolean;
-  message?:       string;
-  accessToken?:   string;
-  refreshToken?:  string;
-  mfaRequired?:   boolean;
-  email?:         string;
+  success?: boolean; message?: string; accessToken?: string; refreshToken?: string;
+  firstLogin?: boolean; mfaEnabled?: boolean; secretImageUri?: string; mfaToken?: string;
 }
-
-/**
- * Réponse après vérification du code 2FA.
- */
+export interface Mandat {
+  mandatId: string; roleSysteme: string; sectionId: string; sectionLibelle: string;
+  sectionCode: string; programmeId: string | null; programmeLibelle: string | null;
+  programmeCode: string | null; permissions: string[]; dateDebut: string;
+  dateFin: string | null; numeroDecision: string | null; actif: boolean; valide: boolean;
+}
+export interface BackendUserContext {
+  userId: string; firstName: string; lastName: string; email: string;
+  matricule: string | null; nui: string | null; cni: string | null;
+  role: string; mandats: Mandat[];
+}
 export interface VerifyResponse {
-  success?:      boolean;
-  message?:      string;
-  accessToken?:  string;
-  refreshToken?: string;
-  user?: {
-    id:        string;
-    firstName: string;
-    lastName:  string;
-    email:     string;
-    role:      string;
-  };
+  success?: boolean; message?: string; accessToken?: string; refreshToken?: string;
+  tokenType?: string; mfaEnabled?: boolean; firstLogin?: boolean;
+  userContext?: BackendUserContext;
 }
-
-export interface GenericResponse {
-  success?: boolean;
-  message?: string;
+export interface UserContext {
+  id: string; firstName: string; lastName: string; email: string;
+  role: string; mandats: Mandat[];
 }
-
-// Dictionnaire d'erreurs de validation par champ
+export interface GenericResponse { success?: boolean; message?: string; }
 export type FormErrors = Record<string, string | undefined>;

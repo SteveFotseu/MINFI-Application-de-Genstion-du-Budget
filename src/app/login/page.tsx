@@ -8,8 +8,12 @@
 //   1. Utilisateur saisit email + mot de passe
 //   2. POST /api/v1/auth/login { email, password }
 //   3. Back-end répond :
-//      → { "mfaEnabled": true }  = 2FA requis → /two-factor
-//      → { "accessToken": "..." } = connexion directe → /dashboard
+//      → { firstLogin: true, secretImageUri: "...", mfaToken: "..." }
+//         = 1ère connexion → stocker QR + mfaToken → /register/qrcode
+//      → { firstLogin: false, mfaToken: "..." }
+//         = connexions suivantes → stocker mfaToken → /two-factor
+//      → { accessToken: "..." }
+//         = connexion directe sans 2FA → /dashboard
 // ============================================================
 
 import React, { useState } from 'react';
@@ -94,7 +98,6 @@ export default function LoginPage() {
     const { name, value } = e.target;
     if (name === 'email')    setEmail(value);
     if (name === 'password') setPassword(value);
-    // Effacer l'erreur du champ modifié
     if (fieldErrors[name]) setFieldErrors(prev => ({ ...prev, [name]: undefined }));
     setApiError('');
   };
@@ -102,7 +105,6 @@ export default function LoginPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Validation locale
     const errors = validate(email, password);
     if (Object.keys(errors).length > 0) { setFieldErrors(errors); return; }
 
@@ -110,7 +112,6 @@ export default function LoginPage() {
     setApiError('');
 
     try {
-      // Appel POST /api/v1/auth/login
       const res = await fetch('https://gbe-8clf.onrender.com/api/v1/auth/login', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
@@ -119,29 +120,39 @@ export default function LoginPage() {
 
       const data = await res.json();
 
-      // Erreur HTTP (401 mauvais identifiants, 404 compte inexistant…)
       if (!res.ok) {
         throw new Error(data.message || 'Identifiants incorrects. Veuillez réessayer.');
       }
 
-      // ✅ Cas 1 : Le back-end retourne { "mfaEnabled": true }
-      // → Stocker l'email → rediriger vers la page de saisie du code 2FA
-      if (data.mfaEnabled === true) {
+      // ✅ CAS 1 : Première connexion (firstLogin: true)
+      // Le back-end retourne : { firstLogin: true, secretImageUri: "...", mfaToken: "..." }
+      // → Stocker l'email, le QR code et le mfaToken, puis rediriger vers /register/qrcode
+      if (data.firstLogin === true) {
+        sessionStorage.setItem('gbe_email_2fa',  email);
+        sessionStorage.setItem('gbe_qr_code',    data.secretImageUri);
+        sessionStorage.setItem('gbe_mfa_token',  data.mfaToken);
+        router.push(APP_ROUTES.REGISTER_QR);
+        return;
+      }
+
+      // ✅ CAS 2 : Connexions suivantes (firstLogin: false, mfaEnabled: true)
+      // Le back-end retourne : { firstLogin: false, mfaEnabled: true, mfaToken: "..." }
+      // → Stocker l'email et le mfaToken, puis rediriger vers /two-factor
+      if (data.mfaToken) {
         sessionStorage.setItem('gbe_email_2fa', email);
+        sessionStorage.setItem('gbe_mfa_token', data.mfaToken);
         router.push(APP_ROUTES.TWO_FACTOR);
         return;
       }
 
-      // ✅ Cas 2 : Connexion directe sans 2FA
-      // → accessToken présent directement
+      // ✅ CAS 3 : Connexion directe sans 2FA (accessToken retourné directement)
       if (data.accessToken) {
         saveAccessToken(data.accessToken);
         router.push(APP_ROUTES.DASHBOARD);
         return;
       }
 
-      // ⚠️ Cas inattendu : réponse 200 mais structure inconnue
-      // Afficher les champs reçus pour debug
+      // ⚠️ Cas inattendu
       setApiError(
         `Réponse inattendue du serveur. Champs reçus : ${Object.keys(data).join(', ')}`
       );
@@ -160,7 +171,6 @@ export default function LoginPage() {
       title="Connexion"
       subtitle="Accédez à votre espace de gestion budgétaire"
     >
-      {/* Erreur API */}
       {apiError && (
         <div className="alert alert--error" role="alert">
           <IconAlert /> {apiError}
@@ -170,7 +180,6 @@ export default function LoginPage() {
       <form onSubmit={handleSubmit} noValidate>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
 
-          {/* Email */}
           <Input
             id="email" name="email" type="email"
             label="Adresse email"
@@ -184,7 +193,6 @@ export default function LoginPage() {
             disabled={isLoading}
           />
 
-          {/* Mot de passe */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             <Input
               id="password" name="password"
@@ -213,12 +221,10 @@ export default function LoginPage() {
             </Link>
           </div>
 
-          {/* Bouton connexion */}
           <Button type="submit" isLoading={isLoading} fullWidth>
             Se connecter
           </Button>
 
-          {/* Badge sécurité */}
           <div className="secure-badge">
             <IconShield />
             Connexion sécurisée – MINFI Cameroun
