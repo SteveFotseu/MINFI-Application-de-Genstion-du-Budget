@@ -6,16 +6,19 @@
 //
 // FONCTIONNALITÉS :
 //   - Vue d'ensemble des utilisateurs (total, actifs, inactifs)
-//   - Liste des utilisateurs avec statuts et affectations
-//   - Actions : créer, modifier, activer/désactiver, supprimer
-//   - Redirection vers /admin/users/edit/[userId] pour modification
+//   - Liste des utilisateurs avec rôle, section, programmes
+//   - Actions : voir détail, modifier, activer/désactiver, supprimer
+//   - Clic sur une ligne → /admin/users/[userId] (page détail)
 //
-// CORRECTIFS :
-//   - Sécurisation de l'accès à `user.affectations` (peut être
-//     `undefined` côté API quand l'utilisateur n'a pas encore
-//     d'affectation, car le backend utilise @JsonInclude(NON_NULL)).
-//   - Normalisation des utilisateurs à la réception (loadUsers).
-//   - Protection des accès aux initiales (firstName / lastName).
+// CORRECTIFS APPORTÉS :
+//   1. Type UserSummary aligné avec le vrai payload backend
+//      (role: string + mandats[] au lieu de affectations[]).
+//   2. Toutes les actions (activate/deactivate/delete) utilisent
+//      désormais ADMIN_ENDPOINTS (proxy) au lieu de routes en dur
+//      qui causaient l'erreur 404.
+//   3. Affichage du rôle principal (user.role) en badge.
+//   4. Affichage de la section + liste des programmes via mandats.
+//   5. Sécurisation de tous les accès optionnels.
 // ============================================================
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -26,14 +29,19 @@ import { getAccessToken, getUserContext, clearTokens } from '@/lib/authService';
 import { APP_ROUTES, ADMIN_ENDPOINTS } from '@/constants/auth';
 
 // ── Types ────────────────────────────────────────────────────
-interface AffectationSummary {
-  affectationId:    string;
+// Mandat = ancien "Affectation". Reflète le payload réel du backend.
+interface Mandat {
+  mandatId:         string;
   roleSysteme:      string;
   sectionId:        string;
   sectionLibelle:   string;
   programmeId:      string | null;
   programmeLibelle: string | null;
+  dateDebut:        string;
+  dateFin:          string | null;
+  numeroDecision:   string | null;
   actif:            boolean;
+  valide:           boolean;
 }
 
 interface UserSummary {
@@ -46,12 +54,20 @@ interface UserSummary {
   firstLogin:   boolean;
   mfaEnabled:   boolean;
   createdDate:  string;
-  affectations: AffectationSummary[];
+  role:         string;     // rôle système global (niveau racine)
+  mandats:      Mandat[];   // remplace l'ancien `affectations`
+  // Champs optionnels rencontrés selon les utilisateurs :
+  matricule?:   string | null;
+  nui?:         string | null;
+  cniNumber?:   string | null;
+  agentId?:     string | null;
+  dateOfBirth?: string | null;
 }
 
 // ── Icônes ──────────────────────────────────────────────────
 const IconUsers    = () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>;
 const IconUserPlus = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="17" y1="11" x2="23" y2="11"/></svg>;
+const IconEye      = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>;
 const IconEdit     = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>;
 const IconTrash    = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3,6 5,6 21,6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>;
 const IconLogout   = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16,17 21,12 16,7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>;
@@ -68,11 +84,15 @@ const Spinner = ({ size = 16, color = '#fff' }: { size?: number; color?: string 
 // ── Badge rôle ───────────────────────────────────────────────
 const ROLE_COLORS: Record<string, { bg: string; color: string; border: string }> = {
   ADMIN:                   { bg: '#EFF6FF', color: '#1D4ED8', border: '#BFDBFE' },
+  MINISTRE:                { bg: '#FEF3C7', color: '#92400E', border: '#FDE68A' },
+  ORDONNATEUR:             { bg: '#F0FDF4', color: '#166534', border: '#BBF7D0' },
   ORDONNATEUR_PRINCIPAL:   { bg: '#F0FDF4', color: '#166534', border: '#BBF7D0' },
   ORDONNATEUR_SECONDAIRE:  { bg: '#F0FDF4', color: '#166534', border: '#BBF7D0' },
   ORDONNATEUR_DELEGUE:     { bg: '#ECFDF5', color: '#065F46', border: '#A7F3D0' },
   CONTROLEUR_FINANCIER:    { bg: '#FFF7ED', color: '#92400E', border: '#FCD34D' },
   COMPTABLE:               { bg: '#FDF4FF', color: '#6B21A8', border: '#E9D5FF' },
+  GESTIONNAIRE:            { bg: '#F0F2F5', color: '#4A5568', border: '#D1D8E0' },
+  AGENT:                   { bg: '#F0F2F5', color: '#4A5568', border: '#D1D8E0' },
 };
 function RoleBadge({ role }: { role: string }) {
   const cfg = ROLE_COLORS[role] ?? { bg: '#F0F2F5', color: '#4A5568', border: '#D1D8E0' };
@@ -85,12 +105,13 @@ function RoleBadge({ role }: { role: string }) {
 }
 
 // ── Helper : normalisation utilisateur ───────────────────────
-// Garantit que `affectations` est toujours un tableau, même si le
-// backend l'omet (cas @JsonInclude(NON_NULL) côté Java).
+// Garantit que `mandats` est toujours un tableau, même si le backend
+// l'omet (cas @JsonInclude(NON_NULL) côté Java).
 function normalizeUser(u: UserSummary): UserSummary {
   return {
     ...u,
-    affectations: Array.isArray(u.affectations) ? u.affectations : [],
+    role:    u.role ?? '',
+    mandats: Array.isArray(u.mandats) ? u.mandats : [],
   };
 }
 
@@ -137,7 +158,6 @@ export default function AdminDashboardPage() {
       });
       if (!res.ok) throw new Error(`Erreur ${res.status}`);
       const data: UserSummary[] = await res.json();
-      // Normalisation : on garantit que chaque user a un tableau `affectations`.
       setUsers(data.map(normalizeUser));
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Impossible de charger les utilisateurs.', 'error');
@@ -154,7 +174,7 @@ export default function AdminDashboardPage() {
     setPending(user.id, true);
     try {
       const token = getAccessToken();
-      const res = await fetch(`/api/admin/users/${user.id}/activate`, {
+      const res = await fetch(ADMIN_ENDPOINTS.USER_ACTIVATE(user.id), {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -174,7 +194,7 @@ export default function AdminDashboardPage() {
     setPending(user.id, true);
     try {
       const token = getAccessToken();
-      const res = await fetch(`/api/admin/users/${user.id}/deactivate`, {
+      const res = await fetch(ADMIN_ENDPOINTS.USER_DEACTIVATE(user.id), {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -193,7 +213,7 @@ export default function AdminDashboardPage() {
     setPending(user.id, true);
     try {
       const token = getAccessToken();
-      const res = await fetch(`/api/admin/users/${user.id}`, {
+      const res = await fetch(ADMIN_ENDPOINTS.USER_DELETE(user.id), {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -212,12 +232,17 @@ export default function AdminDashboardPage() {
   const filtered = users.filter(u => {
     if (!search) return true;
     const q = search.toLowerCase();
-    const affectations = u.affectations ?? [];
+    const mandats = u.mandats ?? [];
     return (
       (u.firstName ?? '').toLowerCase().includes(q) ||
       (u.lastName  ?? '').toLowerCase().includes(q) ||
       (u.email     ?? '').toLowerCase().includes(q) ||
-      affectations.some(a => a.roleSysteme.toLowerCase().includes(q))
+      (u.role      ?? '').toLowerCase().includes(q) ||
+      mandats.some(m =>
+        (m.roleSysteme    ?? '').toLowerCase().includes(q) ||
+        (m.sectionLibelle ?? '').toLowerCase().includes(q) ||
+        (m.programmeLibelle ?? '').toLowerCase().includes(q)
+      )
     );
   });
 
@@ -352,10 +377,10 @@ export default function AdminDashboardPage() {
                 </svg>
                 <input
                   type="text"
-                  placeholder="Rechercher un utilisateur…"
+                  placeholder="Rechercher (nom, email, rôle, section…)"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
-                  style={{ padding: '9px 14px 9px 36px', border: '1.5px solid #E8ECF0', borderRadius: 8, fontFamily: 'var(--font-body)', fontSize: '.82rem', width: 260, outline: 'none' }}
+                  style={{ padding: '9px 14px 9px 36px', border: '1.5px solid #E8ECF0', borderRadius: 8, fontFamily: 'var(--font-body)', fontSize: '.82rem', width: 320, outline: 'none' }}
                 />
               </div>
             </div>
@@ -377,7 +402,7 @@ export default function AdminDashboardPage() {
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ background: '#F8F9FB' }}>
-                      {['Utilisateur', 'Email', 'Rôle / Affectation', 'Statut', 'MFA', 'Actions'].map(col => (
+                      {['Utilisateur', 'Email', 'Rôle', 'Section / Programmes', 'Statut', 'MFA', 'Actions'].map(col => (
                         <th key={col} style={{ padding: '10px 16px', textAlign: 'left', fontSize: '.7rem', fontWeight: 600, color: '#8E9BAA', letterSpacing: '.06em', textTransform: 'uppercase', borderBottom: '1px solid #E8ECF0', whiteSpace: 'nowrap' }}>
                           {col}
                         </th>
@@ -386,17 +411,31 @@ export default function AdminDashboardPage() {
                   </thead>
                   <tbody>
                     {filtered.map((user, idx) => {
-                      const isPending    = pendingIds.has(user.id);
-                      // ✅ FIX : on garantit un tableau, même si le backend
-                      // omet le champ `affectations` (cas @JsonInclude NON_NULL).
-                      const affectations = user.affectations ?? [];
-                      const mainAff      = affectations[0];
-                      // ✅ FIX : on sécurise les initiales (firstName/lastName
-                      // peuvent théoriquement être vides à la création).
-                      const initials     = `${(user.firstName ?? '?')[0]}${(user.lastName ?? '')[0] ?? ''}`;
+                      const isPending  = pendingIds.has(user.id);
+                      const mandats    = user.mandats ?? [];
+                      const mainMandat = mandats[0];
+                      const initials   = `${(user.firstName ?? '?')[0]}${(user.lastName ?? '')[0] ?? ''}`;
+
+                      // Liste des programmes uniques associés à cet utilisateur
+                      const programmes = mandats
+                        .map(m => m.programmeLibelle)
+                        .filter((p): p is string => !!p);
+
+                      // Navigation vers la page détail au clic sur la ligne
+                      const goToDetail = () => {
+                        if (!isPending) router.push(`/admin/users/${user.id}`);
+                      };
 
                       return (
-                        <tr key={user.id} style={{ borderBottom: idx < filtered.length - 1 ? '1px solid #F0F2F5' : 'none', opacity: isPending ? 0.6 : 1, transition: 'background .15s' }}
+                        <tr
+                          key={user.id}
+                          style={{
+                            borderBottom: idx < filtered.length - 1 ? '1px solid #F0F2F5' : 'none',
+                            opacity: isPending ? 0.6 : 1,
+                            transition: 'background .15s',
+                            cursor: isPending ? 'default' : 'pointer',
+                          }}
+                          onClick={goToDetail}
                           onMouseEnter={e => { if (!isPending) e.currentTarget.style.background = '#F8F9FB'; }}
                           onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
                         >
@@ -422,18 +461,42 @@ export default function AdminDashboardPage() {
                             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{user.email}</span>
                           </td>
 
-                          {/* Rôle / Affectation */}
+                          {/* Rôle (badge basé sur user.role) */}
                           <td style={{ padding: '14px 16px' }}>
-                            {mainAff ? (
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                <RoleBadge role={mainAff.roleSysteme} />
-                                <span style={{ fontSize: '.72rem', color: '#8E9BAA' }}>{mainAff.sectionLibelle}</span>
-                                {affectations.length > 1 && (
-                                  <span style={{ fontSize: '.68rem', color: '#8E9BAA' }}>+{affectations.length - 1} autre(s)</span>
+                            {user.role
+                              ? <RoleBadge role={user.role} />
+                              : <span style={{ fontSize: '.75rem', color: '#8E9BAA', fontStyle: 'italic' }}>—</span>}
+                          </td>
+
+                          {/* Section / Programmes (depuis les mandats) */}
+                          <td style={{ padding: '14px 16px' }}>
+                            {mainMandat ? (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 3, maxWidth: 240 }}>
+                                <span style={{ fontSize: '.78rem', fontWeight: 600, color: '#0D2B55' }}>
+                                  {mainMandat.sectionLibelle}
+                                </span>
+                                {programmes.length > 0 ? (
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                                    {programmes.slice(0, 2).map((p, i) => (
+                                      <span key={i} style={{ fontSize: '.66rem', padding: '1px 7px', background: '#F0F4F8', color: '#0D2B55', borderRadius: 4, border: '1px solid #D9E2EC' }}>
+                                        {p}
+                                      </span>
+                                    ))}
+                                    {programmes.length > 2 && (
+                                      <span style={{ fontSize: '.66rem', color: '#8E9BAA' }}>+{programmes.length - 2}</span>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span style={{ fontSize: '.7rem', color: '#8E9BAA', fontStyle: 'italic' }}>Aucun programme</span>
+                                )}
+                                {mandats.length > 1 && (
+                                  <span style={{ fontSize: '.66rem', color: '#8E9BAA' }}>
+                                    +{mandats.length - 1} autre mandat
+                                  </span>
                                 )}
                               </div>
                             ) : (
-                              <span style={{ fontSize: '.78rem', color: '#8E9BAA', fontStyle: 'italic' }}>Aucune affectation</span>
+                              <span style={{ fontSize: '.78rem', color: '#8E9BAA', fontStyle: 'italic' }}>Aucun mandat</span>
                             )}
                           </td>
 
@@ -452,9 +515,16 @@ export default function AdminDashboardPage() {
                             </span>
                           </td>
 
-                          {/* Actions */}
-                          <td style={{ padding: '14px 16px' }}>
+                          {/* Actions — onClick stopPropagation pour ne pas déclencher la nav */}
+                          <td style={{ padding: '14px 16px' }} onClick={e => e.stopPropagation()}>
                             <div style={{ display: 'flex', gap: 5 }}>
+                              {/* Voir détail */}
+                              <Link href={`/admin/users/${user.id}`} style={{ textDecoration: 'none' }}>
+                                <button title="Voir le détail" disabled={isPending} style={btnStyle('#0D2B5520', '#0D2B55', '#EFF6FF')}>
+                                  <IconEye />
+                                </button>
+                              </Link>
+
                               {/* Modifier */}
                               <Link href={APP_ROUTES.ADMIN_EDIT_USER(user.id)} style={{ textDecoration: 'none' }}>
                                 <button title="Modifier" disabled={isPending} style={btnStyle('#007A3D20', '#007A3D', '#F0FDF4')}>
@@ -500,7 +570,7 @@ export default function AdminDashboardPage() {
               <p style={{ fontSize: '.875rem', fontWeight: 600, color: '#0D2B55' }}>{confirmDelete.firstName} {confirmDelete.lastName}</p>
               <p style={{ fontSize: '.75rem', color: '#8E9BAA', marginTop: 3 }}>{confirmDelete.email}</p>
             </div>
-            <p style={{ fontSize: '.82rem', color: '#991B1B', marginBottom: 20 }}>Cette action est irréversible. Toutes les affectations seront supprimées.</p>
+            <p style={{ fontSize: '.82rem', color: '#991B1B', marginBottom: 20 }}>Cette action est irréversible. Tous les mandats seront supprimés.</p>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
               <button onClick={() => setConfirmDelete(null)} style={{ padding: '9px 18px', border: '1.5px solid #E8ECF0', borderRadius: 8, background: 'transparent', cursor: 'pointer', fontFamily: 'var(--font-body)', fontSize: '.875rem', color: '#4A5568' }}>
                 Annuler
