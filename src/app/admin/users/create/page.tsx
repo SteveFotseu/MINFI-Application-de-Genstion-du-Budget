@@ -4,34 +4,17 @@
 // FICHIER  : src/app/admin/users/create/page.tsx
 // RÔLE     : Création d'un utilisateur en 1 étape.
 //
-// FLUX :
-//   1. Charger les agents sans compte  GET /admin/agents/without-account
-//   2. Charger les rôles               GET /admin/users/roles
-//   3. Charger les sections            GET /referentiel/sections
-//   4. L'admin choisit : agent → identifiants → rôle → section
-//   5. Cascade : section choisie → fetch des programmes de la section
-//   6. L'admin coche un OU PLUSIEURS programmes (multi-select)
-//   7. POST /admin/users { agentId, email, password, roleSysteme,
-//                          sectionId, programmeIds: string[] }
-//
-// CHANGEMENT v2 :
-//   - Le sélecteur de programme (single-select) est remplacé par un
-//     panneau multi-sélection avec cases à cocher, barre de recherche,
-//     boutons "Tout cocher / Tout décocher", et résumé des choix.
-//   - Le champ form.programmeId (string) devient form.programmeIds
-//     (string[]) — aligné avec ce qu'attend le backend.
+// v3 : utilise désormais <AdminSidebar /> partagé.
 // ============================================================
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import Image from 'next/image';
-import { getAccessToken, getUserContext, clearTokens } from '@/lib/authService';
+import { getAccessToken, getUserContext } from '@/lib/authService';
 import { APP_ROUTES, ADMIN_ENDPOINTS, REFERENTIEL_ENDPOINTS } from '@/constants/auth';
+import AdminSidebar from '@/components/admin/AdminSidebar';
 
-// ─────────────────────────────────────────────────────────────
-// TRADUCTION DES CODES D'ERREUR BACK-END
-// ─────────────────────────────────────────────────────────────
+// ─── TRADUCTION DES CODES D'ERREUR BACK-END ──────────────────
 const ERROR_MESSAGES: Record<string, string> = {
   'VALIDATION.USER.EMAIL.NOT_BLANK':        'L\'adresse email est obligatoire.',
   'VALIDATION.USER.EMAIL.FORMAT':           'L\'adresse email n\'est pas valide.',
@@ -104,12 +87,11 @@ type Errors = Record<string, string | undefined>;
 
 // ── Icônes ───────────────────────────────────────────────────
 const IconArrowLeft = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12,19 5,12 12,5"/></svg>;
-const IconCheck  = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20,6 9,17 4,12"/></svg>;
-const IconLogout = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16,17 21,12 16,7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>;
-const IconEye    = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>;
-const IconEyeOff = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>;
+const IconCheck     = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20,6 9,17 4,12"/></svg>;
+const IconEye       = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>;
+const IconEyeOff    = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>;
 const IconAlertCircle = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>;
-const IconFieldError  = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>;
+const IconFieldError = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>;
 const IconUser   = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>;
 const IconSearch = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>;
 const IconX      = () => <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>;
@@ -118,7 +100,6 @@ const Spinner = ({ size = 16, color = '#0D2B55' }: { size?: number; color?: stri
   <span style={{ display: 'inline-block', width: size, height: size, border: '2px solid rgba(0,0,0,.1)', borderTopColor: color, borderRadius: '50%', animation: 'spin .65s linear infinite', flexShrink: 0 }} />
 );
 
-// ── Composants UI ────────────────────────────────────────────
 function Field({ label, error, required, hint, children }: { label: string; error?: string; required?: boolean; hint?: string; children: React.ReactNode }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
@@ -166,9 +147,7 @@ const selectStyle = (hasError?: boolean): React.CSSProperties => ({
   backgroundRepeat: 'no-repeat', backgroundPosition: 'right 14px center', paddingRight: 36,
 });
 
-// ─────────────────────────────────────────────────────────────
-// NOUVEAU COMPOSANT : Sélecteur multi-programmes
-// ─────────────────────────────────────────────────────────────
+// ── Multi-select programmes ──────────────────────────────────
 function ProgrammeMultiSelect({
   programmes, selectedIds, onChange, loading, hasError,
 }: {
@@ -180,7 +159,6 @@ function ProgrammeMultiSelect({
 }) {
   const [search, setSearch] = useState('');
 
-  // Filtrage par texte de recherche (libellé OU code)
   const filtered = useMemo(() => {
     if (!search.trim()) return programmes;
     const q = search.toLowerCase();
@@ -196,20 +174,16 @@ function ProgrammeMultiSelect({
   };
 
   const allFilteredSelected = filtered.length > 0 && filtered.every(p => selectedIds.includes(p.id));
-  const someFilteredSelected = filtered.some(p => selectedIds.includes(p.id));
 
   const toggleAll = () => {
     if (allFilteredSelected) {
-      // Décocher tous ceux qui sont actuellement filtrés
       onChange(selectedIds.filter(id => !filtered.some(p => p.id === id)));
     } else {
-      // Cocher tous les filtrés (en gardant ceux déjà sélectionnés hors filtre)
       const additions = filtered.filter(p => !selectedIds.includes(p.id)).map(p => p.id);
       onChange([...selectedIds, ...additions]);
     }
   };
 
-  // État chargement
   if (loading) {
     return (
       <div style={{ padding: '20px 16px', border: '1.5px solid #E8ECF0', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, color: '#8E9BAA', fontSize: '.875rem', background: '#FAFBFC' }}>
@@ -218,7 +192,6 @@ function ProgrammeMultiSelect({
     );
   }
 
-  // État vide
   if (programmes.length === 0) {
     return (
       <div style={{ padding: '14px 16px', border: '1.5px solid #FCD116', borderRadius: 10, background: '#FFFBEB', color: '#92400E', fontSize: '.82rem', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -233,61 +206,30 @@ function ProgrammeMultiSelect({
       borderRadius: 12,
       background: hasError ? '#FFF5F5' : '#fff',
       overflow: 'hidden',
-      transition: 'border-color .15s',
     }}>
-      {/* En-tête : recherche + boutons groupés */}
       <div style={{ padding: '12px 14px', borderBottom: '1px solid #F0F2F5', background: '#F8F9FB', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-        {/* Recherche */}
         <div style={{ flex: 1, minWidth: 180, position: 'relative' }}>
-          <span style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: '#8E9BAA' }}>
-            <IconSearch />
-          </span>
+          <span style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: '#8E9BAA' }}><IconSearch /></span>
           <input
             type="text"
             placeholder="Rechercher un programme…"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            style={{
-              width: '100%', padding: '8px 30px 8px 32px',
-              border: '1.5px solid #E8ECF0', borderRadius: 8,
-              fontFamily: 'var(--font-body)', fontSize: '.8rem',
-              outline: 'none', background: '#fff',
-            }}
+            style={{ width: '100%', padding: '8px 30px 8px 32px', border: '1.5px solid #E8ECF0', borderRadius: 8, fontFamily: 'var(--font-body)', fontSize: '.8rem', outline: 'none', background: '#fff' }}
           />
           {search && (
-            <button
-              type="button"
-              onClick={() => setSearch('')}
-              style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#8E9BAA', padding: 4, display: 'flex' }}
-              title="Effacer la recherche"
-            >
+            <button type="button" onClick={() => setSearch('')}
+              style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#8E9BAA', padding: 4, display: 'flex' }}>
               <IconX />
             </button>
           )}
         </div>
-
-        {/* Tout cocher / décocher */}
-        <button
-          type="button"
-          onClick={toggleAll}
-          style={{
-            padding: '7px 12px',
-            border: '1.5px solid #E8ECF0',
-            borderRadius: 8,
-            background: '#fff',
-            cursor: 'pointer',
-            fontFamily: 'var(--font-body)',
-            fontSize: '.75rem',
-            fontWeight: 600,
-            color: '#0D2B55',
-            whiteSpace: 'nowrap',
-          }}
-        >
+        <button type="button" onClick={toggleAll}
+          style={{ padding: '7px 12px', border: '1.5px solid #E8ECF0', borderRadius: 8, background: '#fff', cursor: 'pointer', fontFamily: 'var(--font-body)', fontSize: '.75rem', fontWeight: 600, color: '#0D2B55', whiteSpace: 'nowrap' }}>
           {allFilteredSelected ? 'Tout décocher' : 'Tout cocher'}
         </button>
       </div>
 
-      {/* Liste des programmes */}
       <div style={{ maxHeight: 280, overflowY: 'auto' }}>
         {filtered.length === 0 ? (
           <p style={{ padding: '20px', textAlign: 'center', fontSize: '.82rem', color: '#8E9BAA', fontStyle: 'italic' }}>
@@ -300,44 +242,25 @@ function ProgrammeMultiSelect({
               <label
                 key={p.id}
                 style={{
-                  display: 'flex', alignItems: 'center', gap: 12,
-                  padding: '11px 14px',
-                  cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', gap: 12, padding: '11px 14px', cursor: 'pointer',
                   borderBottom: idx < filtered.length - 1 ? '1px solid #F0F2F5' : 'none',
-                  background: checked ? '#EFF6FF' : 'transparent',
-                  transition: 'background .12s',
+                  background: checked ? '#EFF6FF' : 'transparent', transition: 'background .12s',
                 }}
                 onMouseEnter={e => { if (!checked) e.currentTarget.style.background = '#F8F9FB'; }}
                 onMouseLeave={e => { if (!checked) e.currentTarget.style.background = 'transparent'; }}
               >
-                {/* Case à cocher custom */}
                 <span style={{
                   width: 18, height: 18, borderRadius: 4,
                   border: `2px solid ${checked ? '#0D2B55' : '#D1D8E0'}`,
                   background: checked ? '#0D2B55' : '#fff',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  flexShrink: 0, transition: 'all .12s',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
                 }}>
-                  {checked && (
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3">
-                      <polyline points="20,6 9,17 4,12"/>
-                    </svg>
-                  )}
+                  {checked && <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3"><polyline points="20,6 9,17 4,12"/></svg>}
                 </span>
-
-                {/* Vraie checkbox cachée (pour accessibilité) */}
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => toggle(p.id)}
-                  style={{ position: 'absolute', opacity: 0, pointerEvents: 'none' }}
-                />
-
-                {/* Libellé du programme */}
+                <input type="checkbox" checked={checked} onChange={() => toggle(p.id)}
+                  style={{ position: 'absolute', opacity: 0, pointerEvents: 'none' }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <p style={{ fontSize: '.85rem', fontWeight: checked ? 600 : 500, color: checked ? '#0D2B55' : '#1A202C' }}>
-                    {p.libelleFr}
-                  </p>
+                  <p style={{ fontSize: '.85rem', fontWeight: checked ? 600 : 500, color: checked ? '#0D2B55' : '#1A202C' }}>{p.libelleFr}</p>
                   <p style={{ fontSize: '.7rem', color: '#8E9BAA', marginTop: 1 }}>
                     Code : <code style={{ background: '#F0F2F5', padding: '1px 5px', borderRadius: 3 }}>{p.code}</code>
                   </p>
@@ -348,7 +271,6 @@ function ProgrammeMultiSelect({
         )}
       </div>
 
-      {/* Pied : résumé */}
       <div style={{ padding: '10px 14px', borderTop: '1px solid #F0F2F5', background: '#F8F9FB', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span style={{ fontSize: '.75rem', color: '#4A5568' }}>
           <strong style={{ color: selectedIds.length > 0 ? '#0D2B55' : '#8E9BAA' }}>{selectedIds.length}</strong>
@@ -356,11 +278,8 @@ function ProgrammeMultiSelect({
           {' '}/{ programmes.length} disponible{programmes.length > 1 ? 's' : ''}
         </span>
         {selectedIds.length > 0 && (
-          <button
-            type="button"
-            onClick={() => onChange([])}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '.72rem', color: '#CE1126', fontWeight: 600, padding: 0 }}
-          >
+          <button type="button" onClick={() => onChange([])}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '.72rem', color: '#CE1126', fontWeight: 600, padding: 0 }}>
             Réinitialiser
           </button>
         )}
@@ -375,14 +294,16 @@ function ProgrammeMultiSelect({
 export default function CreateUserPage() {
   const router = useRouter();
 
+  const [adminName, setAdminName] = useState('');
+
   useEffect(() => {
     const token = getAccessToken();
     if (!token) { router.replace(APP_ROUTES.LOGIN); return; }
     const ctx = getUserContext();
-    if (!ctx || ctx.role !== 'ADMIN') router.replace(APP_ROUTES.DASHBOARD);
+    if (!ctx || ctx.role !== 'ADMIN') { router.replace(APP_ROUTES.DASHBOARD); return; }
+    setAdminName(`${ctx.firstName} ${ctx.lastName}`);
   }, [router]);
 
-  // ── Données référentiel ──
   const [agents,      setAgents]      = useState<AgentWithoutAccount[]>([]);
   const [roles,       setRoles]       = useState<Role[]>([]);
   const [sections,    setSections]    = useState<Section[]>([]);
@@ -390,8 +311,6 @@ export default function CreateUserPage() {
   const [loading,     setLoading]     = useState(true);
   const [loadingProg, setLoadingProg] = useState(false);
 
-  // ── Formulaire ──
-  // 🔄 CHANGEMENT : programmeId (string) → programmeIds (string[])
   const [form, setForm] = useState<{
     agentId: string; email: string; password: string; confirmPassword: string;
     roleSysteme: string; sectionId: string; programmeIds: string[];
@@ -415,7 +334,6 @@ export default function CreateUserPage() {
     Authorization: `Bearer ${getAccessToken()}`,
   }), []);
 
-  // ── Charger agents sans compte + rôles + sections ──
   useEffect(() => {
     setLoading(true);
     Promise.all([
@@ -423,15 +341,11 @@ export default function CreateUserPage() {
       fetch(ADMIN_ENDPOINTS.ROLES, { headers: authH() }).then(r => r.ok ? r.json() : []),
       fetch(REFERENTIEL_ENDPOINTS.SECTIONS, { headers: authH() }).then(r => r.ok ? r.json() : []),
     ]).then(([a, r, s]) => {
-      setAgents(a);
-      setRoles(r);
-      setSections(s);
+      setAgents(a); setRoles(r); setSections(s);
     }).catch(() => showToast('Impossible de charger les données.', 'error'))
       .finally(() => setLoading(false));
   }, [authH]);
 
-  // ── Cascade programmes ──
-  // 🔄 CHANGEMENT : on reset form.programmeIds (tableau) au lieu de programmeId (string).
   const handleSectionChange = async (sectionId: string) => {
     setForm(p => ({ ...p, sectionId, programmeIds: [] }));
     setErrors(p => ({ ...p, sectionId: undefined, programmeIds: undefined }));
@@ -444,18 +358,15 @@ export default function CreateUserPage() {
     finally { setLoadingProg(false); }
   };
 
-  // ── Mise à jour de la sélection multiple de programmes ──
   const handleProgrammesChange = (ids: string[]) => {
     setForm(p => ({ ...p, programmeIds: ids }));
     setErrors(p => ({ ...p, programmeIds: undefined }));
     setBannerErrors([]);
   };
 
-  // ── Agent / rôle sélectionnés (pour affichage) ──
   const selectedAgent = agents.find(a => a.id === form.agentId);
   const selectedRole  = roles.find(r => r.code === form.roleSysteme);
 
-  // ── Validation locale ──
   function validate(): boolean {
     const e: Errors = {};
     if (!form.agentId)    e.agentId = 'Veuillez sélectionner un agent.';
@@ -469,14 +380,12 @@ export default function CreateUserPage() {
       e.confirmPassword = 'Les mots de passe ne correspondent pas.';
     if (!form.roleSysteme) e.roleSysteme = 'Veuillez sélectionner un rôle.';
     if (!form.sectionId)   e.sectionId   = 'Veuillez sélectionner une section.';
-    // 🔄 CHANGEMENT : validation du tableau (au moins 1 programme).
     if (!form.programmeIds || form.programmeIds.length === 0)
       e.programmeIds = 'Veuillez cocher au moins un programme.';
     setErrors(e);
     return Object.keys(e).length === 0;
   }
 
-  // ── Soumettre ──
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setBannerErrors([]);
@@ -486,7 +395,6 @@ export default function CreateUserPage() {
     }
     setSubmitting(true);
     try {
-      // 🔄 CHANGEMENT : on envoie directement le tableau form.programmeIds.
       const payload = {
         agentId:      form.agentId,
         email:        form.email,
@@ -524,46 +432,11 @@ export default function CreateUserPage() {
     setBannerErrors([]);
   };
 
-  // ─────────────────────────────────────────────────────────────
-  // RENDU
-  // ─────────────────────────────────────────────────────────────
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: '#F5F6FA', fontFamily: 'var(--font-body)' }}>
 
-      {/* ════ SIDEBAR ════ */}
-      <aside style={{ width: 240, flexShrink: 0, background: 'linear-gradient(180deg, #0D2B55 0%, #091e3a 100%)', display: 'flex', flexDirection: 'column', position: 'sticky', top: 0, height: '100vh', zIndex: 50 }}>
-        <div style={{ padding: '24px 20px 20px', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{ width: 40, height: 40, borderRadius: '50%', border: '2px solid rgba(255,255,255,.25)', overflow: 'hidden', flexShrink: 0 }}>
-              <Image src="/images/logo-minfi.png" alt="MINFI" width={40} height={40} style={{ objectFit: 'cover' }} />
-            </div>
-            <div>
-              <p style={{ fontFamily: 'var(--font-display)', fontSize: '.9rem', fontWeight: 700, color: '#fff', lineHeight: 1.1 }}>GBE – MINFI</p>
-              <p style={{ fontSize: '.65rem', color: 'rgba(255,255,255,.45)' }}>Administration</p>
-            </div>
-          </div>
-        </div>
-        <nav style={{ flex: 1, padding: '16px 12px' }}>
-          <p style={{ fontSize: '.65rem', color: 'rgba(255,255,255,.3)', fontWeight: 600, letterSpacing: '.12em', textTransform: 'uppercase', padding: '6px 8px 10px' }}>Navigation</p>
-          <Link href={APP_ROUTES.ADMIN_DASHBOARD} style={{ textDecoration: 'none' }}>
-            <div style={{ padding: '10px 12px', borderRadius: 8, cursor: 'pointer' }}>
-              <span style={{ fontSize: '.85rem', color: 'rgba(255,255,255,.55)' }}>← Tableau de bord</span>
-            </div>
-          </Link>
-        </nav>
-        <div style={{ padding: '12px', borderTop: '1px solid rgba(255,255,255,.08)' }}>
-          <button onClick={() => { clearTokens(); router.push(APP_ROUTES.LOGIN); }} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '9px 12px', border: '1px solid rgba(255,255,255,.12)', borderRadius: 8, background: 'rgba(255,255,255,.06)', cursor: 'pointer', fontFamily: 'var(--font-body)', fontSize: '.82rem', color: 'rgba(255,255,255,.6)' }}>
-            <IconLogout /> Déconnexion
-          </button>
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', height: 6 }}>
-          <div style={{ background: '#007A3D' }} />
-          <div style={{ background: '#CE1126', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><svg width="8" height="8" viewBox="0 0 24 24"><polygon fill="#FCD116" points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"/></svg></div>
-          <div style={{ background: '#FCD116' }} />
-        </div>
-      </aside>
+      <AdminSidebar active="users" adminName={adminName} />
 
-      {/* ════ CONTENU ════ */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         <header style={{ background: '#fff', height: 64, padding: '0 32px', display: 'flex', alignItems: 'center', gap: 16, borderBottom: '1px solid #E8ECF0', position: 'sticky', top: 0, zIndex: 40, boxShadow: '0 1px 8px rgba(0,0,0,.06)' }}>
           <Link href={APP_ROUTES.ADMIN_DASHBOARD} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '7px 14px', border: '1.5px solid #E8ECF0', borderRadius: 8, textDecoration: 'none', fontSize: '.82rem', color: '#4A5568' }}>
@@ -593,7 +466,7 @@ export default function CreateUserPage() {
               <form onSubmit={handleSubmit} noValidate>
                 <ErrorBanner errors={bannerErrors} />
 
-                {/* ── BLOC 1 : Sélection de l'agent ── */}
+                {/* BLOC 1 : Agent */}
                 <div style={cardStyle}>
                   <div style={cardHeaderStyle}>
                     <div style={stepBadge('#0D2B55')}><IconUser /></div>
@@ -622,7 +495,6 @@ export default function CreateUserPage() {
                       )}
                     </Field>
 
-                    {/* Fiche de l'agent sélectionné */}
                     {selectedAgent && (
                       <div style={{ marginTop: 14, display: 'flex', gap: 14, padding: '14px 16px', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 10, animation: 'fadeSlideDown .2s ease' }}>
                         <div style={{ width: 40, height: 40, borderRadius: '50%', background: '#0D2B55', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: '.9rem', flexShrink: 0 }}>
@@ -641,7 +513,7 @@ export default function CreateUserPage() {
                   </div>
                 </div>
 
-                {/* ── BLOC 2 : Identifiants de connexion ── */}
+                {/* BLOC 2 : Identifiants */}
                 <div style={{ ...cardStyle, marginTop: 20 }}>
                   <div style={cardHeaderStyle}>
                     <div style={stepBadge('#007A3D')}>
@@ -679,7 +551,7 @@ export default function CreateUserPage() {
                   </div>
                 </div>
 
-                {/* ── BLOC 3 : Rôle et affectation ── */}
+                {/* BLOC 3 : Rôle et affectation */}
                 <div style={{ ...cardStyle, marginTop: 20 }}>
                   <div style={cardHeaderStyle}>
                     <div style={stepBadge('#7C3AED')}>
@@ -692,7 +564,6 @@ export default function CreateUserPage() {
                   </div>
                   <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: 18 }}>
 
-                    {/* Rôle */}
                     <Field label="Rôle système" required error={errors.roleSysteme}>
                       <select style={selectStyle(!!errors.roleSysteme)} value={form.roleSysteme}
                         onChange={e => setField('roleSysteme')(e.target.value)}>
@@ -713,7 +584,6 @@ export default function CreateUserPage() {
                       )}
                     </Field>
 
-                    {/* Section */}
                     <Field label="Section (Ministère)" required error={errors.sectionId}>
                       <select style={selectStyle(!!errors.sectionId)} value={form.sectionId}
                         onChange={e => handleSectionChange(e.target.value)}>
@@ -722,7 +592,6 @@ export default function CreateUserPage() {
                       </select>
                     </Field>
 
-                    {/* 🆕 Programmes (multi-sélection) */}
                     {form.sectionId && (
                       <Field
                         label="Programmes budgétaires"
@@ -743,7 +612,6 @@ export default function CreateUserPage() {
                   </div>
                 </div>
 
-                {/* ── Bouton soumettre ── */}
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 24 }}>
                   <button type="submit" disabled={submitting || agents.length === 0}
                     style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '14px 32px', border: 'none', borderRadius: 10, background: submitting ? '#8E9BAA' : 'linear-gradient(135deg, #007A3D, #005A2D)', color: '#fff', cursor: submitting ? 'not-allowed' : 'pointer', fontFamily: 'var(--font-body)', fontSize: '.95rem', fontWeight: 700, boxShadow: submitting ? 'none' : '0 4px 16px rgba(0,122,61,.25)' }}>
@@ -760,7 +628,6 @@ export default function CreateUserPage() {
         </main>
       </div>
 
-      {/* Toast */}
       {toast && (
         <div style={{ position: 'fixed', bottom: 24, right: 24, zIndex: 2000, display: 'flex', alignItems: 'center', gap: 10, padding: '14px 20px', borderRadius: 10, background: toast.type === 'success' ? '#0D2B55' : '#CE1126', color: '#fff', fontSize: '.85rem', fontWeight: 500, boxShadow: '0 8px 32px rgba(0,0,0,.25)', animation: 'fadeSlideDown .3s ease', maxWidth: 440 }}>
           {toast.type === 'success' ? '✅' : '❌'} {toast.msg}
@@ -770,7 +637,6 @@ export default function CreateUserPage() {
   );
 }
 
-// ── Styles partagés ──────────────────────────────────────────
 const cardStyle: React.CSSProperties = { background: '#fff', borderRadius: 14, border: '1px solid #E8ECF0', boxShadow: '0 2px 12px rgba(0,0,0,.05)', overflow: 'hidden' };
 const cardHeaderStyle: React.CSSProperties = { padding: '18px 24px', borderBottom: '1px solid #E8ECF0', display: 'flex', alignItems: 'center', gap: 12 };
 const cardTitle: React.CSSProperties = { fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 700, color: '#0D2B55' };

@@ -10,26 +10,17 @@
 //   - Actions : voir détail, modifier, activer/désactiver, supprimer
 //   - Clic sur une ligne → /admin/users/[userId] (page détail)
 //
-// CORRECTIFS APPORTÉS :
-//   1. Type UserSummary aligné avec le vrai payload backend
-//      (role: string + mandats[] au lieu de affectations[]).
-//   2. Toutes les actions (activate/deactivate/delete) utilisent
-//      désormais ADMIN_ENDPOINTS (proxy) au lieu de routes en dur
-//      qui causaient l'erreur 404.
-//   3. Affichage du rôle principal (user.role) en badge.
-//   4. Affichage de la section + liste des programmes via mandats.
-//   5. Sécurisation de tous les accès optionnels.
+// v3 : utilise désormais <AdminSidebar /> partagé.
 // ============================================================
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import Image from 'next/image';
 import Link from 'next/link';
-import { getAccessToken, getUserContext, clearTokens } from '@/lib/authService';
+import { getAccessToken, getUserContext } from '@/lib/authService';
 import { APP_ROUTES, ADMIN_ENDPOINTS } from '@/constants/auth';
+import AdminSidebar from '@/components/admin/AdminSidebar';
 
 // ── Types ────────────────────────────────────────────────────
-// Mandat = ancien "Affectation". Reflète le payload réel du backend.
 interface Mandat {
   mandatId:         string;
   roleSysteme:      string;
@@ -54,9 +45,8 @@ interface UserSummary {
   firstLogin:   boolean;
   mfaEnabled:   boolean;
   createdDate:  string;
-  role:         string;     // rôle système global (niveau racine)
-  mandats:      Mandat[];   // remplace l'ancien `affectations`
-  // Champs optionnels rencontrés selon les utilisateurs :
+  role:         string;
+  mandats:      Mandat[];
   matricule?:   string | null;
   nui?:         string | null;
   cniNumber?:   string | null;
@@ -70,7 +60,6 @@ const IconUserPlus = () => <svg width="15" height="15" viewBox="0 0 24 24" fill=
 const IconEye      = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>;
 const IconEdit     = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>;
 const IconTrash    = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3,6 5,6 21,6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>;
-const IconLogout   = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16,17 21,12 16,7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>;
 const IconRefresh  = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="23,4 23,11 16,11"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 11"/></svg>;
 const IconCheck    = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20,6 9,17 4,12"/></svg>;
 const IconX        = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>;
@@ -96,17 +85,13 @@ const ROLE_COLORS: Record<string, { bg: string; color: string; border: string }>
 };
 function RoleBadge({ role }: { role: string }) {
   const cfg = ROLE_COLORS[role] ?? { bg: '#F0F2F5', color: '#4A5568', border: '#D1D8E0' };
-  const label = role.replace(/_/g, ' ');
   return (
     <span style={{ padding: '2px 10px', borderRadius: 999, fontSize: '.7rem', fontWeight: 600, background: cfg.bg, color: cfg.color, border: `1px solid ${cfg.border}`, whiteSpace: 'nowrap' }}>
-      {label}
+      {role.replace(/_/g, ' ')}
     </span>
   );
 }
 
-// ── Helper : normalisation utilisateur ───────────────────────
-// Garantit que `mandats` est toujours un tableau, même si le backend
-// l'omet (cas @JsonInclude(NON_NULL) côté Java).
 function normalizeUser(u: UserSummary): UserSummary {
   return {
     ...u,
@@ -138,7 +123,6 @@ export default function AdminDashboardPage() {
     setPendingIds(prev => { const n = new Set(prev); v ? n.add(id) : n.delete(id); return n; });
   };
 
-  // ── Guard admin ──
   useEffect(() => {
     const token = getAccessToken();
     if (!token) { router.replace(APP_ROUTES.LOGIN); return; }
@@ -148,7 +132,6 @@ export default function AdminDashboardPage() {
     setAdminName(`${ctx.firstName} ${ctx.lastName}`);
   }, [router]);
 
-  // ── Chargement des utilisateurs ──
   const loadUsers = useCallback(async () => {
     setLoading(true);
     try {
@@ -168,7 +151,6 @@ export default function AdminDashboardPage() {
 
   useEffect(() => { loadUsers(); }, [loadUsers]);
 
-  // ── Activer un compte ──
   const handleActivate = async (user: UserSummary) => {
     if (pendingIds.has(user.id)) return;
     setPending(user.id, true);
@@ -188,7 +170,6 @@ export default function AdminDashboardPage() {
     }
   };
 
-  // ── Désactiver un compte ──
   const handleDeactivate = async (user: UserSummary) => {
     if (pendingIds.has(user.id)) return;
     setPending(user.id, true);
@@ -208,7 +189,6 @@ export default function AdminDashboardPage() {
     }
   };
 
-  // ── Supprimer un compte ──
   const handleDelete = async (user: UserSummary) => {
     setPending(user.id, true);
     try {
@@ -228,7 +208,6 @@ export default function AdminDashboardPage() {
     }
   };
 
-  // ── Filtrage ──
   const filtered = users.filter(u => {
     if (!search) return true;
     const q = search.toLowerCase();
@@ -246,72 +225,16 @@ export default function AdminDashboardPage() {
     );
   });
 
-  // ── KPIs ──
   const totalUsers    = users.length;
   const activeUsers   = users.filter(u => u.enabled).length;
   const inactiveUsers = users.filter(u => !u.enabled).length;
   const firstLogins   = users.filter(u => u.firstLogin).length;
 
-  // ─────────────────────────────────────────────────────────────
-  // RENDU
-  // ─────────────────────────────────────────────────────────────
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: '#F5F6FA', fontFamily: 'var(--font-body)' }}>
 
-      {/* ════ SIDEBAR ════ */}
-      <aside style={{ width: 240, flexShrink: 0, background: 'linear-gradient(180deg, #0D2B55 0%, #091e3a 100%)', display: 'flex', flexDirection: 'column', position: 'sticky', top: 0, height: '100vh', zIndex: 50 }}>
-        <div style={{ padding: '24px 20px 20px', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{ width: 40, height: 40, borderRadius: '50%', border: '2px solid rgba(255,255,255,.25)', overflow: 'hidden', flexShrink: 0 }}>
-              <Image src="/images/logo-minfi.png" alt="MINFI" width={40} height={40} style={{ objectFit: 'cover' }} />
-            </div>
-            <div>
-              <p style={{ fontFamily: 'var(--font-display)', fontSize: '.9rem', fontWeight: 700, color: '#fff', lineHeight: 1.1 }}>GBE – MINFI</p>
-              <p style={{ fontSize: '.65rem', color: 'rgba(255,255,255,.45)', letterSpacing: '.06em' }}>Administration</p>
-            </div>
-          </div>
-        </div>
+      <AdminSidebar active="users" adminName={adminName} usersCount={totalUsers} />
 
-        <nav style={{ flex: 1, padding: '16px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <p style={{ fontSize: '.65rem', color: 'rgba(255,255,255,.3)', fontWeight: 600, letterSpacing: '.12em', textTransform: 'uppercase', padding: '6px 8px 10px' }}>Navigation</p>
-          {[
-            { label: 'Tableau de bord', href: APP_ROUTES.ADMIN_DASHBOARD, active: true },
-          ].map(item => (
-            <Link key={item.href} href={item.href} style={{ textDecoration: 'none' }}>
-              <div style={{ display: 'flex', alignItems: 'center', padding: '10px 12px', borderRadius: 8, background: item.active ? 'rgba(255,255,255,.12)' : 'transparent', border: item.active ? '1px solid rgba(255,255,255,.15)' : '1px solid transparent' }}>
-                <span style={{ fontSize: '.85rem', fontWeight: item.active ? 600 : 400, color: item.active ? '#fff' : 'rgba(255,255,255,.55)' }}>{item.label}</span>
-                {item.active && totalUsers > 0 && (
-                  <span style={{ marginLeft: 'auto', fontSize: '.65rem', background: '#CE1126', color: '#fff', borderRadius: 999, padding: '1px 7px', fontWeight: 700 }}>{totalUsers}</span>
-                )}
-              </div>
-            </Link>
-          ))}
-
-          {adminName && (
-            <div style={{ margin: '16px 8px 0', padding: '12px', background: 'rgba(255,255,255,.06)', borderRadius: 8, border: '1px solid rgba(255,255,255,.08)' }}>
-              <p style={{ fontSize: '.65rem', color: 'rgba(255,255,255,.4)', marginBottom: 4 }}>Connecté en tant que</p>
-              <p style={{ fontSize: '.82rem', color: '#FCD116', fontWeight: 600 }}>{adminName}</p>
-              <p style={{ fontSize: '.7rem', color: 'rgba(255,255,255,.5)', marginTop: 2 }}>Administrateur système</p>
-            </div>
-          )}
-        </nav>
-
-        <div style={{ padding: '12px', borderTop: '1px solid rgba(255,255,255,.08)' }}>
-          <button onClick={() => { clearTokens(); router.push(APP_ROUTES.LOGIN); }} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '9px 12px', border: '1px solid rgba(255,255,255,.12)', borderRadius: 8, background: 'rgba(255,255,255,.06)', cursor: 'pointer', fontFamily: 'var(--font-body)', fontSize: '.82rem', color: 'rgba(255,255,255,.6)' }}>
-            <IconLogout /> Déconnexion
-          </button>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', height: 6 }}>
-          <div style={{ background: '#007A3D' }} />
-          <div style={{ background: '#CE1126', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <svg width="8" height="8" viewBox="0 0 24 24"><polygon fill="#FCD116" points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"/></svg>
-          </div>
-          <div style={{ background: '#FCD116' }} />
-        </div>
-      </aside>
-
-      {/* ════ CONTENU ════ */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
 
         {/* Topbar */}
@@ -324,7 +247,7 @@ export default function AdminDashboardPage() {
             <button onClick={loadUsers} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', border: '1.5px solid #E8ECF0', borderRadius: 8, background: '#fff', cursor: 'pointer', fontFamily: 'var(--font-body)', fontSize: '.82rem', color: '#4A5568' }}>
               <IconRefresh /> Rafraîchir
             </button>
-            <Link href="/admin/users/create" style={{ textDecoration: 'none' }}>
+            <Link href={APP_ROUTES.ADMIN_CREATE_USER} style={{ textDecoration: 'none' }}>
               <button style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 18px', border: 'none', borderRadius: 8, background: 'linear-gradient(135deg, #0D2B55, #1A3A6B)', color: '#fff', cursor: 'pointer', fontFamily: 'var(--font-body)', fontSize: '.875rem', fontWeight: 600, boxShadow: '0 4px 14px rgba(13,43,85,.25)' }}>
                 <IconUserPlus /> Nouvel utilisateur
               </button>
@@ -365,7 +288,6 @@ export default function AdminDashboardPage() {
           {/* Tableau */}
           <div style={{ background: '#fff', borderRadius: 14, border: '1px solid #E8ECF0', boxShadow: '0 2px 12px rgba(0,0,0,.05)', overflow: 'hidden' }}>
 
-            {/* En-tête tableau + recherche */}
             <div style={{ padding: '16px 24px', borderBottom: '1px solid #E8ECF0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
               <div>
                 <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1rem', fontWeight: 700, color: '#0D2B55' }}>Liste des utilisateurs</h2>
@@ -415,15 +337,12 @@ export default function AdminDashboardPage() {
                       const mandats    = user.mandats ?? [];
                       const mainMandat = mandats[0];
                       const initials   = `${(user.firstName ?? '?')[0]}${(user.lastName ?? '')[0] ?? ''}`;
-
-                      // Liste des programmes uniques associés à cet utilisateur
                       const programmes = mandats
                         .map(m => m.programmeLibelle)
                         .filter((p): p is string => !!p);
 
-                      // Navigation vers la page détail au clic sur la ligne
                       const goToDetail = () => {
-                        if (!isPending) router.push(`/admin/users/${user.id}`);
+                        if (!isPending) router.push(APP_ROUTES.ADMIN_USER_DETAIL(user.id));
                       };
 
                       return (
@@ -439,7 +358,6 @@ export default function AdminDashboardPage() {
                           onMouseEnter={e => { if (!isPending) e.currentTarget.style.background = '#F8F9FB'; }}
                           onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
                         >
-                          {/* Utilisateur */}
                           <td style={{ padding: '14px 16px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                               <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg, #0D2B55, #1A3A6B)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: '.85rem', flexShrink: 0 }}>
@@ -456,19 +374,16 @@ export default function AdminDashboardPage() {
                             </div>
                           </td>
 
-                          {/* Email */}
                           <td style={{ padding: '14px 16px', fontSize: '.82rem', color: '#4A5568', maxWidth: 200 }}>
                             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{user.email}</span>
                           </td>
 
-                          {/* Rôle (badge basé sur user.role) */}
                           <td style={{ padding: '14px 16px' }}>
                             {user.role
                               ? <RoleBadge role={user.role} />
                               : <span style={{ fontSize: '.75rem', color: '#8E9BAA', fontStyle: 'italic' }}>—</span>}
                           </td>
 
-                          {/* Section / Programmes (depuis les mandats) */}
                           <td style={{ padding: '14px 16px' }}>
                             {mainMandat ? (
                               <div style={{ display: 'flex', flexDirection: 'column', gap: 3, maxWidth: 240 }}>
@@ -500,7 +415,6 @@ export default function AdminDashboardPage() {
                             )}
                           </td>
 
-                          {/* Statut */}
                           <td style={{ padding: '14px 16px' }}>
                             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 12px', borderRadius: 999, fontSize: '.75rem', fontWeight: 600, background: user.enabled ? '#F0FDF4' : '#FEF2F2', color: user.enabled ? '#166534' : '#991B1B', border: `1px solid ${user.enabled ? '#BBF7D0' : '#FECACA'}` }}>
                               <span style={{ width: 6, height: 6, borderRadius: '50%', background: user.enabled ? '#22C55E' : '#EF4444' }} />
@@ -508,31 +422,26 @@ export default function AdminDashboardPage() {
                             </span>
                           </td>
 
-                          {/* MFA */}
                           <td style={{ padding: '14px 16px' }}>
                             <span style={{ fontSize: '.75rem', color: user.mfaEnabled ? '#166534' : '#8E9BAA', fontWeight: 500 }}>
                               {user.mfaEnabled ? '✓ Configuré' : '— Non configuré'}
                             </span>
                           </td>
 
-                          {/* Actions — onClick stopPropagation pour ne pas déclencher la nav */}
                           <td style={{ padding: '14px 16px' }} onClick={e => e.stopPropagation()}>
                             <div style={{ display: 'flex', gap: 5 }}>
-                              {/* Voir détail */}
-                              <Link href={`/admin/users/${user.id}`} style={{ textDecoration: 'none' }}>
+                              <Link href={APP_ROUTES.ADMIN_USER_DETAIL(user.id)} style={{ textDecoration: 'none' }}>
                                 <button title="Voir le détail" disabled={isPending} style={btnStyle('#0D2B5520', '#0D2B55', '#EFF6FF')}>
                                   <IconEye />
                                 </button>
                               </Link>
 
-                              {/* Modifier */}
                               <Link href={APP_ROUTES.ADMIN_EDIT_USER(user.id)} style={{ textDecoration: 'none' }}>
                                 <button title="Modifier" disabled={isPending} style={btnStyle('#007A3D20', '#007A3D', '#F0FDF4')}>
                                   <IconEdit />
                                 </button>
                               </Link>
 
-                              {/* Activer / Désactiver */}
                               {user.enabled ? (
                                 <button title="Désactiver" disabled={isPending} onClick={() => handleDeactivate(user)} style={btnStyle('#CE112620', '#CE1126', '#FEF2F2')}>
                                   {isPending ? <Spinner size={11} color="#CE1126" /> : <IconX />}
@@ -543,7 +452,6 @@ export default function AdminDashboardPage() {
                                 </button>
                               )}
 
-                              {/* Supprimer */}
                               <button title="Supprimer" disabled={isPending} onClick={() => setConfirmDelete(user)} style={btnStyle('#CE112620', '#CE1126', '#FEF2F2')}>
                                 <IconTrash />
                               </button>
@@ -560,7 +468,7 @@ export default function AdminDashboardPage() {
         </main>
       </div>
 
-      {/* ── Modal confirmation suppression ── */}
+      {/* Modal confirmation suppression */}
       {confirmDelete && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,.5)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           onClick={e => { if (e.target === e.currentTarget) setConfirmDelete(null); }}>
@@ -583,7 +491,7 @@ export default function AdminDashboardPage() {
         </div>
       )}
 
-      {/* ── Toast ── */}
+      {/* Toast */}
       {toast && (
         <div style={{ position: 'fixed', bottom: 24, right: 24, zIndex: 2000, display: 'flex', alignItems: 'center', gap: 10, padding: '14px 20px', borderRadius: 10, background: toast.type === 'success' ? '#0D2B55' : '#CE1126', color: '#fff', fontSize: '.85rem', fontWeight: 500, boxShadow: '0 8px 32px rgba(0,0,0,.25)', animation: 'fadeSlideDown .3s ease' }}>
           {toast.type === 'success' ? '✅' : '❌'} {toast.msg}

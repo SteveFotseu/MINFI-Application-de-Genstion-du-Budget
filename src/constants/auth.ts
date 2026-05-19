@@ -61,10 +61,15 @@ export const APP_ROUTES = {
   FORGOT_PASSWORD: '/forgot-password',
   DASHBOARD:       '/dashboard',
 
-  ADMIN_DASHBOARD:   '/admin/dashboard',
-  ADMIN_CREATE_USER: '/admin/users/create',
-  ADMIN_CREATE_AGENT:'/admin/agents/create',
-  ADMIN_EDIT_USER:   (userId: string) => `/admin/users/edit/${userId}`,
+  ADMIN_DASHBOARD:    '/admin/dashboard',
+  ADMIN_CREATE_USER:  '/admin/users/create',
+  ADMIN_USER_DETAIL:  (userId: string) => `/admin/users/${userId}`,
+  ADMIN_EDIT_USER:    (userId: string) => `/admin/users/edit/${userId}`,
+
+  // 🆕 Agents
+  ADMIN_AGENTS:        '/admin/agents',
+  ADMIN_CREATE_AGENT:  '/admin/agents/create',
+  ADMIN_AGENT_DETAIL:  (agentId: string) => `/admin/agents/${agentId}`,
 
   ORD_PRINCIPAL_DASHBOARD: '/ordonnateur/dashboard',
   ORD_IMPUTATIONS:         '/ordonnateur/imputations',
